@@ -33,7 +33,7 @@ boot payload before Electron navigates. Shutdown travels back over the same IPC
 channel so DSH can dispose its Cordis tree before process-level termination is
 used as a fallback.
 
-## Initial milestone
+## Foundation milestones
 
 The first milestone is deliberately narrow:
 
@@ -42,5 +42,12 @@ The first milestone is deliberately narrow:
 3. Load it in a sandboxed `BrowserWindow`.
 4. Shut down the child process with the application.
 
-Packaging, auto-update, profiles, tray integration, and OAuth UI follow only
-after this lifecycle is reliable.
+The next foundation milestone packages a self-contained production dependency
+closure and verifies a copied application outside the checkout. DSH and
+first-party plugin entries remain ordinary files under `resources/app` because
+the runtime spawns DSH directly and DSH may link its dependency closure into an
+isolated profile. The packaged Electron binary therefore keeps its RunAsNode
+fuse while disabling Node option and inspector injection.
+
+Signing, auto-update, profiles, tray integration, and OAuth UI follow only after
+the lifecycle and cross-platform package acceptance are reliable.

@@ -2,8 +2,14 @@
   "name": "@dsh-workbench/desktop",
   "version": "0.1.0",
   "private": true,
+  "author": "DSH Workbench contributors",
+  "description": "A secure desktop companion for DeepSeek Harness",
+  "productName": "DSH Workbench",
   "type": "module",
   "main": "lib/main.js",
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build && electron .",

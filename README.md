@@ -57,6 +57,12 @@ Electron window. DSH user data is isolated under Electron's application
 Run `pnpm test:integration` to exercise the real DSH process, dynamic port,
 Workbench overlay, Web payload, and graceful IPC shutdown.
 
+Run `pnpm package:dir && pnpm test:package` to build a self-contained application
+and exercise a copy outside the checkout with isolated state. Use
+`pnpm package:artifacts` for the current platform's unsigned CI distribution
+formats and checksums. See [Packaging and release acceptance](docs/packaging.md)
+for the artifact matrix, smoke guarantees, and signing boundary.
+
 ## Repository layout
 
 ```text

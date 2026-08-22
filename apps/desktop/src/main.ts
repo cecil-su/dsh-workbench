@@ -1,7 +1,7 @@
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import {
   DshRuntime,
   DshRuntimeError,
@@ -10,7 +10,9 @@ import {
 } from '@dsh-workbench/runtime'
 
 import { prepareDesktopCoreContribution } from './contribution.js'
-import { isAllowedNavigation, isExternalHttpUrl } from './navigation.js'
+import { runPackageSmoke } from './package-smoke.js'
+import { parsePackageSmokeOptions } from './smoke-options.js'
+import { createWorkbenchBrowserWindow } from './window.js'
 
 let mainWindow: BrowserWindow | undefined
 let quitting = false
@@ -33,13 +35,6 @@ function logRuntimeError(message: string, error: unknown): void {
   if (error instanceof DshRuntimeError && error.output) {
     console.error('Recent DSH output:\n%s', error.output)
   }
-}
-
-function openExternalUrl(url: string, allowedOrigin: string): void {
-  if (!isExternalHttpUrl(url, allowedOrigin)) return
-  void shell.openExternal(url).catch((error: unknown) => {
-    console.error('Failed to open external URL:', error)
-  })
 }
 
 async function promptForRetry(message: string, error: unknown): Promise<boolean> {
@@ -83,8 +78,11 @@ async function getRuntime(): Promise<DshRuntime> {
 
   const operation = (async () => {
     const userDataPath = app.getPath('userData')
+    const workspacePath = join(userDataPath, 'workspace')
+    await mkdir(workspacePath, { mode: 0o700, recursive: true })
     const desktopCore = await prepareDesktopCoreContribution(userDataPath)
     const instance = new DshRuntime({
+      cwd: workspacePath,
       env: {
         ...process.env,
         DSH_HOME: join(userDataPath, 'dsh'),
@@ -108,52 +106,13 @@ async function getRuntime(): Promise<DshRuntime> {
   return operation
 }
 
-function configureWindowSecurity(window: BrowserWindow, allowedOrigin: string): void {
-  const dshSession = window.webContents.session
-  dshSession.setPermissionCheckHandler(() => false)
-  dshSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
-  })
-
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    openExternalUrl(url, allowedOrigin)
-    return { action: 'deny' }
-  })
-
-  const guardNavigation = (event: Electron.Event, url: string): void => {
-    if (isAllowedNavigation(url, allowedOrigin)) return
-    event.preventDefault()
-    openExternalUrl(url, allowedOrigin)
-  }
-  window.webContents.on('will-navigate', guardNavigation)
-  window.webContents.on('will-redirect', guardNavigation)
-}
-
 async function createBrowserWindow(ready: DshRuntimeReady): Promise<BrowserWindow> {
-  const allowedOrigin = new URL(ready.url).origin
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 960,
-    minHeight: 640,
-    title: 'DSH Workbench',
-    backgroundColor: '#111318',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      partition: 'persist:dsh-workbench',
-      sandbox: true,
-      webSecurity: true,
-      preload: fileURLToPath(new URL('./preload.js', import.meta.url)),
-    },
-  })
+  const window = createWorkbenchBrowserWindow(ready)
 
   mainWindow = window
   window.once('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
-  configureWindowSecurity(window, allowedOrigin)
-
   try {
     await window.loadURL(ready.url)
     windowReplacementInProgress = false
@@ -163,6 +122,19 @@ async function createBrowserWindow(ready: DshRuntimeReady): Promise<BrowserWindo
     window.destroy()
     throw error
   }
+}
+
+function installPackageSmokeLifecycle(
+  options: NonNullable<ReturnType<typeof parsePackageSmokeOptions>>,
+): void {
+  app.on('window-all-closed', () => {})
+  void app.whenReady().then(async () => {
+    const exitCode = await runPackageSmoke(options)
+    process.exit(exitCode)
+  }).catch((error: unknown) => {
+    console.error('Packaged smoke lifecycle failed:', error)
+    process.exit(1)
+  })
 }
 
 async function performOpenMainWindowWithRecovery(): Promise<void> {
@@ -290,8 +262,22 @@ function installApplicationLifecycle(): void {
   })
 }
 
-if (!app.requestSingleInstanceLock()) {
+let packageSmokeOptions: ReturnType<typeof parsePackageSmokeOptions> = undefined
+let packageSmokeArgumentError = false
+try {
+  packageSmokeOptions = parsePackageSmokeOptions(process.argv)
+  if (packageSmokeOptions) app.setPath('userData', packageSmokeOptions.userDataPath)
+} catch (error) {
+  console.error('Invalid package smoke arguments:', error)
+  packageSmokeArgumentError = true
+}
+
+if (packageSmokeArgumentError) {
+  app.exit(1)
+} else if (!app.requestSingleInstanceLock()) {
   app.quit()
+} else if (packageSmokeOptions) {
+  installPackageSmokeLifecycle(packageSmokeOptions)
 } else {
   installApplicationLifecycle()
 }

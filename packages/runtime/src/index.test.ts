@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildDshWebArgs,
+  buildDshProcessArgs,
   DshRuntime,
   DshRuntimeError,
   parseDesktopReadyMessage,
   resolveDshBin,
+  sanitizeDshEnvironment,
 } from './index.js'
 
 const fakeDshBin = fileURLToPath(new URL('../test/fixtures/fake-dsh.mjs', import.meta.url))
@@ -56,6 +58,30 @@ describe('DSH runtime', () => {
       '--port',
       '0',
     ])
+  })
+
+  it('exposes Node internals only to the supervised DSH process', () => {
+    expect(buildDshProcessArgs('/opt/dsh/lib/bin.js', ['/one.patch.yml'], 43123)).toEqual([
+      '--expose-internals',
+      '/opt/dsh/lib/bin.js',
+      'web',
+      '--patch',
+      '/one.patch.yml',
+      '--no-open',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      '43123',
+    ])
+  })
+
+  it('removes Node and Electron injection variables case-insensitively', () => {
+    expect(sanitizeDshEnvironment({
+      DSH_SAFE_VALUE: 'preserved',
+      electron_run_as_node: '1',
+      Node_Options: '--inspect',
+      node_path: '/tmp/poison',
+    })).toEqual({ DSH_SAFE_VALUE: 'preserved' })
   })
 
   it('rejects invalid configured ports', () => {
@@ -204,5 +230,19 @@ describe('DSH runtime', () => {
       stage: 'spawn',
     })
     expect(runtime.state).toBe('idle')
+  })
+
+  it('removes parent Node injection variables from the supervised process', async () => {
+    const runtime = fakeRuntime('ready', {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: '--definitely-not-a-valid-node-option',
+        NODE_PATH: '/tmp/dsh-workbench-node-path-poison',
+      },
+    })
+
+    await expect(runtime.start()).resolves.toMatchObject({
+      url: 'http://127.0.0.1:43123',
+    })
   })
 })

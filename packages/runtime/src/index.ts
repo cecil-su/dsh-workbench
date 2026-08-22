@@ -12,6 +12,11 @@ const LOOPBACK_HOST = '127.0.0.1'
 const READY_MESSAGE_TYPE = 'dsh-workbench/ready'
 const SHUTDOWN_MESSAGE_TYPE = 'dsh-workbench/shutdown'
 const DESKTOP_PROTOCOL_VERSION = 1
+const UNSAFE_DSH_ENVIRONMENT_KEYS = new Set([
+  'ELECTRON_RUN_AS_NODE',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+])
 
 export type DshRuntimeState = 'idle' | 'starting' | 'running' | 'stopping' | 'failed'
 export type DshRuntimeErrorStage = 'spawn' | 'startup' | 'readiness' | 'shutdown'
@@ -118,6 +123,22 @@ export function buildDshWebArgs(
     '--port',
     String(port),
   ]
+}
+
+export function buildDshProcessArgs(
+  dshBin: string,
+  patchFiles: readonly string[] = [],
+  port = 0,
+): string[] {
+  return ['--expose-internals', dshBin, ...buildDshWebArgs(patchFiles, port)]
+}
+
+export function sanitizeDshEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      ([key]) => !UNSAFE_DSH_ENVIRONMENT_KEYS.has(key.toUpperCase()),
+    ),
+  )
 }
 
 export function parseDesktopReadyMessage(message: unknown): DesktopReadyMessage | undefined {
@@ -233,7 +254,7 @@ export class DshRuntime {
 
     this.#cwd = options.cwd ?? process.cwd()
     this.#dshBin = options.dshBin ?? resolveDshBin()
-    this.#env = { ...options.env ?? process.env }
+    this.#env = sanitizeDshEnvironment(options.env ?? process.env)
     this.#execPath = options.execPath ?? process.execPath
     this.#onExit = options.onExit
     this.#patchFiles = [...options.patchFiles ?? []]
@@ -317,7 +338,7 @@ export class DshRuntime {
     try {
       child = spawn(
         this.#execPath,
-        [this.#dshBin, ...buildDshWebArgs(this.#patchFiles, this.#port)],
+        buildDshProcessArgs(this.#dshBin, this.#patchFiles, this.#port),
         {
           cwd: this.#cwd,
           env: {

@@ -1,5 +1,7 @@
 # Repository instructions
 
+- Read `docs/product-direction.md` before planning product features. Treat its
+  product scope and roadmap as the source of truth.
 - Keep this repository independent from DeepSeek Harness Core.
 - Implement product behavior as a Cordis/DSH plugin whenever an extension point exists.
 - Pin every `@deepseek-ai/dsh*` dependency to an exact version.

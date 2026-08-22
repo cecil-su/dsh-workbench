@@ -12,6 +12,9 @@ plugins, and upstream packages are pinned to exact versions.
 > Status: early scaffold. DeepSeek Harness is a developer preview and may ship
 > compatibility-breaking changes.
 
+See [Product direction](docs/product-direction.md) for the long-term scope,
+product pillars, and roadmap horizons.
+
 ## Architecture
 
 ```text

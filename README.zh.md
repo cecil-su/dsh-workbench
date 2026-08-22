@@ -10,6 +10,8 @@ DSH Workbench 保持上游 Harness 可替换：Electron 只负责桌面生命周
 
 > 当前状态：早期工程骨架。DeepSeek Harness 仍处于开发者预览阶段，可能包含破坏性变更。
 
+长期定位、产品支柱和路线阶段见[产品方向](docs/product-direction.md)。
+
 ## 架构
 
 ```text

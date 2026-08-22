@@ -1,0 +1,18 @@
+{
+  "name": "@dsh-workbench/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "pnpm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dsh-workbench/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "catalog:"
+  }
+}

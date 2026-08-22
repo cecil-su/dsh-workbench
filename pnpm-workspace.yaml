@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+  - plugins/*
+
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': false
+  koffi: true
+  node-pty: true
+  protobufjs: false
+
+catalog:
+  '@deepseek-ai/dsh': 0.1.1-rc.2
+  '@deepseek-ai/cordis': 4.0.1
+  electron: 43.4.1

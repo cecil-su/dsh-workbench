@@ -7,8 +7,17 @@ const require = createRequire(import.meta.url)
 export interface DshRuntimeOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
+  patchFiles?: readonly string[]
   startupTimeoutMs?: number
   url?: string
+}
+
+export function buildDshWebArgs(patchFiles: readonly string[] = []): string[] {
+  return [
+    'web',
+    ...patchFiles.flatMap((file) => ['--patch', file]),
+    '--no-open',
+  ]
 }
 
 export function resolveDshBin(): string {
@@ -21,6 +30,7 @@ export class DshRuntime {
 
   readonly #cwd: string
   readonly #env: NodeJS.ProcessEnv
+  readonly #patchFiles: readonly string[]
   readonly #startupTimeoutMs: number
   #child: ChildProcess | undefined
   #stopping = false
@@ -29,6 +39,7 @@ export class DshRuntime {
     this.url = options.url ?? 'http://127.0.0.1:3080'
     this.#cwd = options.cwd ?? process.cwd()
     this.#env = options.env ?? process.env
+    this.#patchFiles = [...options.patchFiles ?? []]
     this.#startupTimeoutMs = options.startupTimeoutMs ?? 30_000
   }
 
@@ -36,7 +47,7 @@ export class DshRuntime {
     if (this.#child) return
 
     const stderr: string[] = []
-    const child = spawn(process.execPath, [resolveDshBin(), 'web', '--no-open'], {
+    const child = spawn(process.execPath, [resolveDshBin(), ...buildDshWebArgs(this.#patchFiles)], {
       cwd: this.#cwd,
       env: {
         ...this.#env,

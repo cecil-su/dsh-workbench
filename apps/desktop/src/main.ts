@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { DshRuntime } from '@dsh-workbench/runtime'
 
+import { prepareDesktopCoreContribution } from './contribution.js'
+
 let runtime: DshRuntime | undefined
 let quitting = false
 
@@ -15,12 +17,17 @@ function openExternalUrl(url: string): void {
 }
 
 async function createMainWindow(): Promise<BrowserWindow> {
-  runtime ??= new DshRuntime({
-    env: {
-      ...process.env,
-      DSH_HOME: join(app.getPath('userData'), 'dsh'),
-    },
-  })
+  if (!runtime) {
+    const userDataPath = app.getPath('userData')
+    const desktopCore = await prepareDesktopCoreContribution(userDataPath)
+    runtime = new DshRuntime({
+      env: {
+        ...process.env,
+        DSH_HOME: join(userDataPath, 'dsh'),
+      },
+      patchFiles: [desktopCore.patch],
+    })
+  }
   await runtime.start()
 
   const window = new BrowserWindow({

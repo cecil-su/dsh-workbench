@@ -48,7 +48,9 @@ pnpm dev
 `pnpm dev` builds the local packages, starts the DSH Web host without opening an
 external browser, waits for `http://127.0.0.1:3080`, and loads it inside a
 sandboxed Electron window. DSH user data is isolated under Electron's
-application `userData` directory.
+application `userData` directory. The desktop host also applies the
+Workbench-owned `desktop-core` overlay without modifying the user's DSH
+profile.
 
 ## Repository layout
 

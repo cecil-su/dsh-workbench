@@ -7,9 +7,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build && electron .",
+    "test": "pnpm --filter @dsh-workbench/desktop-core build && vitest run --config vitest.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dsh-workbench/desktop-core": "workspace:*",
     "@dsh-workbench/runtime": "workspace:*"
   },
   "devDependencies": {

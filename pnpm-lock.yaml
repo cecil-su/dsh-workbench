@@ -32,6 +32,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@dsh-workbench/desktop-core':
+        specifier: workspace:*
+        version: link:../../plugins/desktop-core
       '@dsh-workbench/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime

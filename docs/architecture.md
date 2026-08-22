@@ -12,13 +12,19 @@
 ## Dependency direction
 
 ```text
-apps/desktop -> packages/runtime -> @deepseek-ai/dsh
-plugins/* -----------------------> @deepseek-ai/cordis
+apps/desktop -> packages/runtime      -> @deepseek-ai/dsh
+             -> plugins/desktop-core -> @deepseek-ai/cordis
 ```
 
 Upstream packages never import Workbench packages. Product plugins may depend
 on published DSH contracts, but the Electron renderer never receives Node.js
 access.
+
+The desktop host resolves first-party plugin entries from its own packaged
+dependencies, writes a concrete Workbench-owned JSON overlay under Electron's
+`userData`, and passes it to the pinned DSH process with `--patch`. This keeps
+first-party composition deterministic without installing packages into, or
+rewriting, the user's DSH profile.
 
 ## Initial milestone
 

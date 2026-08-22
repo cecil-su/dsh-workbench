@@ -44,10 +44,13 @@ pnpm check
 pnpm dev
 ```
 
-`pnpm dev` 会构建本地包、启动不打开外部浏览器的 DSH Web Host，等待
-`http://127.0.0.1:3080` 就绪，然后在开启沙箱的 Electron 窗口中加载页面。
-DSH 用户数据独立保存在 Electron 应用的 `userData` 目录中。桌面宿主还会加载
-Workbench 自己的 `desktop-core` overlay，但不会修改用户的 DSH profile。
+`pnpm dev` 会构建本地包、让 DSH Web Host 使用操作系统分配的本机端口，验证完整
+Web UI 后再在开启沙箱的 Electron 窗口中加载页面。DSH 用户数据独立保存在
+Electron 应用的 `userData` 目录中。桌面宿主还会加载 Workbench 自己的
+`desktop-core` overlay，但不会修改用户的 DSH profile。
+
+运行 `pnpm test:integration` 可以验证真实 DSH 进程、动态端口、Workbench overlay、
+Web 载荷和 IPC 优雅关闭。
 
 ## 目录
 

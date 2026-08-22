@@ -26,12 +26,19 @@ dependencies, writes a concrete Workbench-owned JSON overlay under Electron's
 first-party composition deterministic without installing packages into, or
 rewriting, the user's DSH profile.
 
+The host explicitly binds DSH to `127.0.0.1` with port `0`. After the complete
+Loader tree settles, `desktop-core` reports the OS-assigned URL over a versioned
+Node IPC message. The Runtime validates the loopback URL and the rendered DSH
+boot payload before Electron navigates. Shutdown travels back over the same IPC
+channel so DSH can dispose its Cordis tree before process-level termination is
+used as a fallback.
+
 ## Initial milestone
 
 The first milestone is deliberately narrow:
 
 1. Start the pinned DSH Web host as a supervised child process.
-2. Wait until the loopback HTTP endpoint is ready.
+2. Wait for the versioned desktop-ready message and verify the loopback UI.
 3. Load it in a sandboxed `BrowserWindow`.
 4. Shut down the child process with the application.
 

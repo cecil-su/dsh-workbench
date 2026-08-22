@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build && electron .",
     "test": "pnpm --filter @dsh-workbench/desktop-core build && vitest run --config vitest.config.ts",
+    "test:integration": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

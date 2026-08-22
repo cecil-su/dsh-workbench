@@ -12,6 +12,7 @@
     "check": "pnpm typecheck && pnpm test",
     "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/desktop dev",
     "test": "pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @dsh-workbench/desktop test:integration",
     "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm -r --if-present typecheck"
   },
   "devDependencies": {

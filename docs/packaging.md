@@ -19,7 +19,9 @@ checkout, assigns isolated user-data and working directories, and then starts
 the copied executable. After `package:artifacts`, the same command extracts the
 generated ZIP outside the checkout and starts that distribution instead.
 `package:artifacts` creates the platform distribution formats and a
-`SHA256SUMS` file.
+`SHA256SUMS` file. Artifact packaging requires a clean Git worktree. Its package
+manifest records the exact revision, lockfile identity, compatibility identity,
+tool versions, platform, architecture, and complete artifact list.
 
 For an offline or unreliable-network rebuild, set the task-specific
 `DSH_WORKBENCH_ELECTRON_DIST` environment variable to an unpacked Electron
@@ -96,3 +98,10 @@ Artifact names include `unsigned-ci`. These files are engineering acceptance
 outputs, not end-user releases. Code signing, macOS notarization, trusted
 publisher credentials, update metadata, and publication remain separate future
 release gates; no signing secret is stored in this repository.
+
+After all three native jobs pass, the release workflow verifies the complete
+artifact, checksum, application-smoke, and harness-smoke evidence matrix and
+uploads `release-qualification.json`. See
+[Release qualification](release-qualification.md) for the compatibility lock,
+provenance fields, smoke-to-manifest binding, exact platform set, and aggregate
+acceptance rules.

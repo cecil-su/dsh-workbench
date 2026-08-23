@@ -62,3 +62,29 @@ jobs:
           path: dist/smoke/package-smoke-*.json
           if-no-files-found: warn
           retention-days: 14
+
+  qualification:
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-workbench-*-unsigned-ci
+          path: dist/release-evidence
+          merge-multiple: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-workbench-*-diagnostics
+          path: dist/release-evidence
+          merge-multiple: false
+      - run: node scripts/verify-release-matrix.mjs dist/release-evidence dist/release-qualification.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-workbench-release-qualification
+          path: dist/release-qualification.json
+          if-no-files-found: error
+          retention-days: 14

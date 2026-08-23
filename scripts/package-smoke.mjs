@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   access,
   cp,
@@ -294,13 +294,20 @@ function sanitizedProcessResult(result, canary) {
 }
 
 function validateManifest(manifest) {
-  assertSmoke(manifest.schemaVersion === 1, 'Unsupported package manifest schema')
+  assertSmoke(manifest.schemaVersion === 2, 'Unsupported package manifest schema')
   assertSmoke(manifest.platform === process.platform, 'Package manifest platform does not match the host')
   const expectedArch = process.env.DSH_WORKBENCH_EXPECTED_ARCH ?? process.arch
   assertSmoke(manifest.arch === expectedArch, `Expected ${expectedArch}, packaged ${manifest.arch}`)
+  assertSmoke(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(manifest.gitSha), 'Package manifest Git revision is invalid')
+  assertSmoke(typeof manifest.gitDirty === 'boolean', 'Package manifest clean-worktree state is invalid')
+  assertSmoke(/^[a-f0-9]{64}$/u.test(manifest.lockfileSha256), 'Package manifest lockfile identity is invalid')
+  assertSmoke(/^[a-f0-9]{64}$/u.test(manifest.compatibilitySha256), 'Package manifest compatibility identity is invalid')
   assertSmoke(typeof manifest.executable === 'string', 'Package manifest has no executable')
   assertSmoke(typeof manifest.resourcesPath === 'string', 'Package manifest has no resources path')
   assertSmoke(['artifacts', 'directory'].includes(manifest.mode), 'Package manifest has an invalid mode')
+  if (manifest.mode === 'artifacts') {
+    assertSmoke(manifest.gitDirty === false, 'Release artifact manifest came from a dirty worktree')
+  }
 }
 
 function validateReport(report, context) {
@@ -397,8 +404,11 @@ let result
 let reportPath
 let temporaryRoot
 let failure
+let packageManifestSha256
 try {
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  const serializedManifest = await readFile(manifestPath)
+  packageManifestSha256 = createHash('sha256').update(serializedManifest).digest('hex')
+  const manifest = JSON.parse(serializedManifest.toString('utf8'))
   validateManifest(manifest)
   const originalExecutable = resolve(root, manifest.executable)
   const originalResourcesPath = resolve(root, manifest.resourcesPath)
@@ -501,6 +511,7 @@ try {
       message: redactDiagnosticCanary(failure.message, diagnosticProbe.canary),
       name: failure.name,
     } : undefined,
+    packageManifestSha256,
     platform: process.platform,
     arch: expectedArch,
     process: safeResult ? {
@@ -512,7 +523,7 @@ try {
       stdout: safeResult.stdout,
       timedOut: safeResult.timedOut,
     } : undefined,
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: failure ? 'failed' : 'passed',
   }
   const serializedHarnessReport = `${JSON.stringify(harnessReport, undefined, 2)}\n`

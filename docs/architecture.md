@@ -69,6 +69,13 @@ log and three fixed recovery actions. Runtime/window replacement remains owned
 by the main-process transition coordinator; see
 [Diagnostics and repair](diagnostics.md).
 
+Cross-platform release qualification builds on the packaged smoke boundary.
+The compatibility lock binds the pinned DSH, Electron toolchain, first-party
+overlay, and package checks to one semantic identity. Each native package adds
+clean-source and lockfile provenance, and the release workflow accepts the
+candidate only after the Linux, macOS, and Windows identities and evidence sets
+match; see [Release qualification](release-qualification.md).
+
 Signing, auto-update, and native lifecycle integration follow only after the
 runtime, profiles, authorization, and cross-platform package acceptance are
 reliable.

@@ -3,6 +3,9 @@ import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { readCompatibility } from '../../../scripts/compatibility.mjs'
+import { renderDiagnosticsClient } from '../scripts/build-client.mjs'
+
 interface ClientExports {
   DiagnosticsTab(props: { api: unknown; t: (key: string) => string }): unknown
   EXPECTED_DSH_VERSION: string
@@ -24,7 +27,11 @@ async function loadClient(options: {
   repair?: () => Promise<unknown>
   snapshot?: () => Promise<unknown>
 } = {}): Promise<{ exports: ClientExports; inventoryList: ReturnType<typeof vi.fn>; slots: unknown[] }> {
-  const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
+  const [sourceTemplate, compatibility] = await Promise.all([
+    readFile(new URL('./client.js', import.meta.url), 'utf8'),
+    readCompatibility(new URL('../../..', import.meta.url)),
+  ])
+  const source = renderDiagnosticsClient(sourceTemplate, compatibility.dsh.packageVersion)
   let definition: { factory(require: (id: string) => unknown): ClientExports } | undefined
   const inventoryList = vi.fn(async () => ({
     ok: true,
@@ -193,6 +200,21 @@ function findTestElement(
 }
 
 describe('diagnostics client bundle', () => {
+  it('derives its expected DSH version from the compatibility lock', async () => {
+    const compatibility = await readCompatibility(new URL('../../..', import.meta.url))
+    const prepared = await loadClient()
+
+    expect(prepared.exports.EXPECTED_DSH_VERSION).toBe(compatibility.dsh.packageVersion)
+  })
+
+  it('rejects unsafe compatibility versions before rendering the client', async () => {
+    const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
+
+    expect(() => renderDiagnosticsClient(source, '0.1.1-rc.2\";throw new Error()//')).toThrow(
+      /must be an exact semver/u,
+    )
+  })
+
   it('registers a Plugins tab and reads the official inventory Remote with the preload bridge', async () => {
     const prepared = await loadClient()
     expect(prepared.exports.inject).toContain('remote.pluginInventory')

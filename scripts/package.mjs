@@ -19,6 +19,10 @@ import { spawn } from 'node:child_process'
 import { build, Platform } from 'electron-builder'
 
 import baseConfig from '../electron-builder.config.mjs'
+import {
+  assertPackagingModeProvenance,
+  collectPackageProvenance,
+} from './package-provenance.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const distRoot = join(root, 'dist')
@@ -390,7 +394,14 @@ async function prepareReleaseUpload(artifacts, packageManifestPath) {
     cp(packageManifestPath, join(releaseUploadDir, 'package-manifest.json')),
     cp(join(outputDir, 'SHA256SUMS'), join(releaseUploadDir, 'SHA256SUMS')),
   ])
+  const uploadedManifestPath = join(releaseUploadDir, 'package-manifest.json')
+  if (await sha256(packageManifestPath) !== await sha256(uploadedManifestPath)) {
+    throw new Error('Release-upload package manifest does not match the artifact manifest')
+  }
 }
+
+const provenance = await collectPackageProvenance({ projectRoot: root })
+assertPackagingModeProvenance(mode[0], provenance)
 
 await resetBuildDirectories()
 await deployProductionApp()
@@ -457,7 +468,6 @@ if (mode[0] === '--artifacts' && artifacts.length === 0) {
 }
 if (mode[0] === '--artifacts') validateReleaseArtifactSet(artifacts)
 
-const gitSha = await run('git', ['rev-parse', 'HEAD'], { capture: true })
 const builderPackage = await readJson(join(root, 'node_modules', 'electron-builder', 'package.json'))
 const manifest = {
   appPath: projectRelative(packagedAppPath),
@@ -466,11 +476,14 @@ const manifest = {
   electronVersion: baseConfig.electronVersion,
   electronBuilderVersion: builderPackage.version,
   executable: projectRelative(executable),
-  gitSha,
+  compatibilitySha256: provenance.compatibilitySha256,
+  gitDirty: provenance.gitDirty,
+  gitSha: provenance.gitSha,
+  lockfileSha256: provenance.lockfileSha256,
   mode: mode[0] === '--dir' ? 'directory' : 'artifacts',
   platform: process.platform,
   resourcesPath: projectRelative(resourcesPath),
-  schemaVersion: 1,
+  schemaVersion: 2,
   versions: {
     desktop: (await readJson(join(stageDir, 'package.json'))).version,
     dsh: dshPackage.version,

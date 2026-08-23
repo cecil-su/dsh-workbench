@@ -77,7 +77,9 @@ Run `pnpm package:dir && pnpm test:package` to build a self-contained applicatio
 and exercise a copy outside the checkout with isolated state. Use
 `pnpm package:artifacts` for the current platform's unsigned CI distribution
 formats and checksums. See [Packaging and release acceptance](docs/packaging.md)
-for the artifact matrix, smoke guarantees, and signing boundary.
+for the artifact matrix, smoke guarantees, and signing boundary. The release
+workflow qualifies one clean, matching Linux/macOS/Windows evidence matrix as
+described in [Release qualification](docs/release-qualification.md).
 
 ## Repository layout
 

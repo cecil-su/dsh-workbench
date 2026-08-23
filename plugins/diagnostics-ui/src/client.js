@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const React = require("react");
     const h = React.createElement;
     const NS = "dshWorkbench.diagnostics";
-    const EXPECTED_DSH_VERSION = "0.1.1-rc.2";
+    const EXPECTED_DSH_VERSION = "__DSH_WORKBENCH_EXPECTED_DSH_VERSION__";
     const TAIL_PAGE_LIMIT = 200;
     const MAX_TAIL_PAGES = 4;
     const REQUIRED_ENTRIES = Object.freeze([

@@ -67,6 +67,8 @@ Web 载荷和 IPC 优雅关闭。
 运行 `pnpm package:dir && pnpm test:package` 可构建自包含应用，并把完整应用复制到
 工作区之外、使用隔离状态执行验收。`pnpm package:artifacts` 会生成当前平台的未签名
 CI 分发格式与校验和。产物矩阵、冒烟保证和签名边界见[打包与发布验收](docs/packaging.md)。
+发布工作流会把同一干净版本在 Linux、macOS 与 Windows 上的完整证据聚合为一份
+资格报告，规则见[发布资格](docs/release-qualification.md)。
 
 ## 目录
 

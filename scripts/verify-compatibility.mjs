@@ -9,6 +9,8 @@ import {
 
 const rootFromScript = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DSH_PACKAGE_PREFIX = '@deepseek-ai/dsh'
+const DIRECTORY_PICKER_PATCH_PACKAGE = '@deepseek-ai/dsh-host-directory-picker-native'
+const DIRECTORY_PICKER_PATCH_PATH = 'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch'
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 const EXPECTED_FIRST_PARTY_PLUGINS = Object.freeze([
   Object.freeze({
@@ -472,9 +474,105 @@ function verifyPackageVerifier(source, plugins, issues) {
   }
 }
 
+function verifyDirectoryPickerPatch({
+  dshVersion,
+  lock,
+  packageVerifierSource,
+  patchDocumentation,
+  patchSource,
+  rootPackage,
+  testSource,
+  workspace,
+}, issues) {
+  const patchKey = `${DIRECTORY_PICKER_PATCH_PACKAGE}@${dshVersion}`
+  record(
+    issues,
+    workspace.patchedDependencies?.[patchKey] === DIRECTORY_PICKER_PATCH_PATH,
+    `pnpm workspace must patch ${patchKey} from ${DIRECTORY_PICKER_PATCH_PATH}`,
+  )
+
+  const patchHash = lock.patchedDependencies?.[patchKey]
+  record(
+    issues,
+    typeof patchHash === 'string' && /^[a-f0-9]{64}$/u.test(patchHash),
+    `pnpm lock must record a SHA-256 patch hash for ${patchKey}`,
+  )
+  const snapshotKeys = isObject(lock.snapshots)
+    ? Object.keys(lock.snapshots).filter((key) => key.startsWith(`${patchKey}(`))
+    : []
+  record(issues, snapshotKeys.length === 1, `pnpm lock must contain exactly one patched ${patchKey} snapshot`)
+  if (typeof patchHash === 'string') {
+    for (const key of snapshotKeys) {
+      record(
+        issues,
+        key.includes(`patch_hash=${patchHash}`),
+        `pnpm lock ${patchKey} snapshot must use its declared patch hash`,
+      )
+    }
+  }
+
+  record(
+    issues,
+    patchSource.includes('diff --git a/lib/worker.cjs b/lib/worker.cjs')
+      && patchSource.includes('require("./worker-ipc.cjs")'),
+    'directory-picker patch must wire worker.cjs to the IPC helper',
+  )
+  record(
+    issues,
+    patchSource.includes('diff --git a/lib/worker-ipc.cjs b/lib/worker-ipc.cjs')
+      && /message\.kind === "showing"[\s\S]*send\(message\);[\s\S]*return;[\s\S]*send\(message, \(\) =>/u.test(patchSource),
+    'directory-picker patch must keep showing non-terminal and flush terminal outcomes',
+  )
+  record(
+    issues,
+    patchDocumentation.includes(`\`${patchKey}\``)
+      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/8')
+      && patchDocumentation.includes('Owner:')
+      && patchDocumentation.includes('Introduced: 2026-08-23')
+      && patchDocumentation.includes('Removal condition:')
+      && patchDocumentation.includes('scripts/directory-picker-patch.test.mjs'),
+    'directory-picker patch documentation must record issue, owner, introduction, protection, and removal condition',
+  )
+  record(
+    issues,
+    rootPackage.scripts?.['test:scripts']?.split('scripts/directory-picker-patch.test.mjs').length === 2
+      && testSource.includes('createWin32DialogPost')
+      && testSource.includes("kind: 'showing'")
+      && testSource.includes("kind: 'done'")
+      && testSource.includes("kind: 'error'"),
+    'directory-picker patch regression test must run and cover showing, done, and error messages',
+  )
+  for (const fileName of ['worker.cjs', 'worker-ipc.cjs']) {
+    const stageAssignment = packageVerifierSource.match(new RegExp(
+      `const\\s+(\\w+)\\s*=\\s*join\\(\\s*stageDir\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-host-directory-picker-native')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted(fileName)}\\s*,?\\s*\\)`,
+      'u',
+    ))
+    record(
+      issues,
+      Boolean(stageAssignment),
+      `package verifier must resolve directory-picker ${fileName} in the production stage`,
+    )
+    if (stageAssignment) {
+      record(
+        issues,
+        new RegExp(`access\\(\\s*${escapeRegex(stageAssignment[1])}\\s*\\)`, 'u').test(packageVerifierSource),
+        `package verifier must require staged directory-picker ${fileName}`,
+      )
+    }
+    record(
+      issues,
+      new RegExp(
+        `access\\(\\s*join\\(\\s*packagedAppPath\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-host-directory-picker-native')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted(fileName)}\\s*,?\\s*\\)\\s*\\)`,
+        'u',
+      ).test(packageVerifierSource),
+      `package verifier must require packaged directory-picker ${fileName}`,
+    )
+  }
+}
+
 export async function verifyCompatibility(root = rootFromScript) {
   const issues = []
-  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource] = await Promise.all([
+  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource, patchDocumentation, patchSource, directoryPickerTestSource] = await Promise.all([
     readFile(join(root, '.gitattributes'), 'utf8'),
     readCompatibility(root),
     readFile(join(root, 'upstream', 'version.json'), 'utf8').then(JSON.parse),
@@ -486,6 +584,9 @@ export async function verifyCompatibility(root = rootFromScript) {
     readFile(join(root, 'scripts', 'package.mjs'), 'utf8'),
     readFile(join(root, 'plugins', 'diagnostics-ui', 'src', 'client.js'), 'utf8'),
     readFile(join(root, 'plugins', 'diagnostics-ui', 'scripts', 'build-client.mjs'), 'utf8'),
+    readFile(join(root, 'patches', 'README.md'), 'utf8'),
+    readFile(join(root, ...DIRECTORY_PICKER_PATCH_PATH.split('/')), 'utf8'),
+    readFile(join(root, 'scripts', 'directory-picker-patch.test.mjs'), 'utf8'),
   ])
   const workspace = parsePnpmYaml(workspaceSource)
   const lock = parsePnpmYaml(lockSource)
@@ -645,6 +746,16 @@ export async function verifyCompatibility(root = rootFromScript) {
     record(issues, desktopPackage.dependencies?.[plugin.packageName] === 'workspace:*', `desktop dependencies must include ${plugin.packageName} as workspace:*`)
   }
   verifyPackageVerifier(packageVerifierSource, plugins, issues)
+  verifyDirectoryPickerPatch({
+    dshVersion,
+    lock,
+    packageVerifierSource,
+    patchDocumentation,
+    patchSource,
+    rootPackage,
+    testSource: directoryPickerTestSource,
+    workspace,
+  }, issues)
 
   if (issues.length > 0) throw new CompatibilityVerificationError(issues)
   const hash = compatibilitySha256(compatibility)

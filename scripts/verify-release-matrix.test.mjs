@@ -136,6 +136,13 @@ function createHarnessSmoke(definition, marker, appReportPath, packageManifestSh
       timedOut: false,
     },
     schemaVersion: 2,
+    ...(definition.platform === 'linux' ? {
+      sandbox: {
+        helperContentVerified: true,
+        helperModeVerified: true,
+        helperSha256: 'e'.repeat(64),
+      },
+    } : {}),
     status: 'passed',
   }
 }
@@ -252,6 +259,9 @@ test('qualifies an exact three-platform matrix and writes deterministic evidence
     assert.equal(first.platforms[0].artifacts.length, 3)
     assert.equal(first.platforms[1].artifacts.length, 2)
     assert.equal(first.platforms[2].artifacts.length, 2)
+    assert.equal(first.platforms[0].sandbox.helperContentVerified, true)
+    assert.equal(first.platforms[0].sandbox.helperModeVerified, true)
+    assert.equal(first.platforms[0].sandbox.helperSha256, 'e'.repeat(64))
     assert.match(first.platforms[0].evidence.manifest.sha256, /^[a-f0-9]{64}$/u)
     assert.equal(
       first.platforms[0].evidence.manifest.path,
@@ -461,6 +471,24 @@ test('rejects failed and weak M6 smoke evidence', async (context) => {
       report.process.diagnosticCanaryExposed = true
       await writeJson(path, report)
     }, /diagnosticCanaryExposed must be false/u)
+  })
+
+  await context.test('missing Linux sandbox helper evidence', async () => {
+    await assertRejected(async ({ entries }) => {
+      const path = entries.get('linux-x64').harnessSmokePath
+      const report = await readJson(path)
+      delete report.sandbox
+      await writeJson(path, report)
+    }, /sandbox must be an object/u)
+  })
+
+  await context.test('weak Linux sandbox helper evidence', async () => {
+    await assertRejected(async ({ entries }) => {
+      const path = entries.get('linux-x64').harnessSmokePath
+      const report = await readJson(path)
+      report.sandbox.helperContentVerified = false
+      await writeJson(path, report)
+    }, /helperContentVerified must be true/u)
   })
 
   await context.test('legacy harness without manifest binding', async () => {

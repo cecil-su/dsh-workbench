@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   access,
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -61,6 +62,60 @@ function resourcesPathFor(executable) {
   return process.platform === 'darwin'
     ? join(dirname(dirname(executable)), 'Resources')
     : join(dirname(executable), 'resources')
+}
+
+async function sha256File(path) {
+  return createHash('sha256').update(await readFile(path)).digest('hex')
+}
+
+async function verifyLinuxSandboxHelper(executable) {
+  if (process.platform !== 'linux') return undefined
+
+  const configuredValue = process.env.CHROME_DEVEL_SANDBOX
+  assertSmoke(
+    typeof configuredValue === 'string' && configuredValue.length > 0,
+    'Linux package smoke requires CHROME_DEVEL_SANDBOX',
+  )
+  assertSmoke(isAbsolute(configuredValue), 'Configured Chromium sandbox path must be absolute')
+  const configuredPath = resolve(configuredValue)
+  const configuredStats = await lstat(configuredPath)
+  assertSmoke(
+    configuredStats.isFile() && !configuredStats.isSymbolicLink(),
+    'Configured Chromium sandbox must be a regular file',
+  )
+  assertSmoke(
+    await realpath(configuredPath) === configuredPath,
+    'Configured Chromium sandbox path must not traverse symbolic links',
+  )
+  assertSmoke(configuredStats.uid === 0, 'Configured Chromium sandbox must be owned by root')
+  assertSmoke(
+    (configuredStats.mode & 0o7777) === 0o4755,
+    'Configured Chromium sandbox must have mode 4755',
+  )
+
+  const packagedPath = join(dirname(executable), 'chrome-sandbox')
+  const packagedStats = await lstat(packagedPath)
+  assertSmoke(
+    packagedStats.isFile() && !packagedStats.isSymbolicLink(),
+    'Extracted ZIP Chromium sandbox must be a regular file',
+  )
+  assertSmoke(
+    await realpath(packagedPath) === packagedPath,
+    'Extracted ZIP Chromium sandbox path must not traverse symbolic links',
+  )
+  const [configuredSha256, packagedSha256] = await Promise.all([
+    sha256File(configuredPath),
+    sha256File(packagedPath),
+  ])
+  assertSmoke(
+    configuredSha256 === packagedSha256,
+    'Configured Chromium sandbox does not match the extracted ZIP helper',
+  )
+  return Object.freeze({
+    helperContentVerified: true,
+    helperModeVerified: true,
+    helperSha256: packagedSha256,
+  })
 }
 
 async function extractArchive(archive, destination) {
@@ -405,6 +460,7 @@ let reportPath
 let temporaryRoot
 let failure
 let packageManifestSha256
+let sandboxEvidence
 try {
   const serializedManifest = await readFile(manifestPath)
   packageManifestSha256 = createHash('sha256').update(serializedManifest).digest('hex')
@@ -453,6 +509,7 @@ try {
 
   const executable = await realpath(installedExecutable)
   const resourcesPath = await realpath(resourcesPathFor(executable))
+  sandboxEvidence = await verifyLinuxSandboxHelper(executable)
   const cwd = join(temporaryRoot, 'cwd')
   const userDataPath = join(temporaryRoot, 'user-data')
   await Promise.all([
@@ -524,6 +581,7 @@ try {
       timedOut: safeResult.timedOut,
     } : undefined,
     schemaVersion: 2,
+    sandbox: sandboxEvidence,
     status: failure ? 'failed' : 'passed',
   }
   const serializedHarnessReport = `${JSON.stringify(harnessReport, undefined, 2)}\n`

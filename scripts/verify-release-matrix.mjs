@@ -384,6 +384,16 @@ function validateHarnessSmoke(
   assert(typeof processReport.stdout === 'string' && processReport.stdout.includes('DSH_WORKBENCH_PACKAGE_SMOKE_OK'), `${label}.process.stdout lacks the success marker`)
   assert(processReport.stdout.includes(marker), `${label}.process.stdout lacks the diagnostic marker`)
   assert(typeof processReport.stderr === 'string', `${label}.process.stderr must be a string`)
+  if (definition.platform !== 'linux') return undefined
+
+  const sandbox = requireRecord(value.sandbox, `${label}.sandbox`)
+  assert(sandbox.helperContentVerified === true, `${label}.sandbox.helperContentVerified must be true`)
+  assert(sandbox.helperModeVerified === true, `${label}.sandbox.helperModeVerified must be true`)
+  return {
+    helperContentVerified: true,
+    helperModeVerified: true,
+    helperSha256: requireSha256(sandbox.helperSha256, `${label}.sandbox.helperSha256`),
+  }
 }
 
 function identityFromManifest(manifest) {
@@ -520,7 +530,7 @@ export async function verifyReleaseMatrix(evidenceRootPath, outputPath) {
       manifestEntry.manifest,
       appSmokeEntry.label,
     )
-    validateHarnessSmoke(
+    const sandbox = validateHarnessSmoke(
       harnessSmokeEntry.report,
       definition,
       marker,
@@ -551,6 +561,7 @@ export async function verifyReleaseMatrix(evidenceRootPath, outputPath) {
       },
       id: definition.id,
       platform: definition.platform,
+      ...(sandbox ? { sandbox } : {}),
       status: 'passed',
     })
   }

@@ -52,7 +52,7 @@ jobs:
       matrix:
         include:
           - id: linux-x64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             arch: x64
           - id: macos-arm64
             os: macos-15
@@ -76,6 +76,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes xvfb
       - run: pnpm install --frozen-lockfile
       - run: pnpm package:dir
+      - if: runner.os == 'Linux'
+        name: Verify unprivileged user namespaces
+        run: |
+          unshare --user --map-root-user true
       - run: pnpm test:package
       - if: always()
         uses: actions/upload-artifact@v4

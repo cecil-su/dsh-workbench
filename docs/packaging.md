@@ -105,3 +105,11 @@ uploads `release-qualification.json`. See
 [Release qualification](release-qualification.md) for the compatibility lock,
 provenance fields, smoke-to-manifest binding, exact platform set, and aggregate
 acceptance rules.
+
+The Linux runner copies the packaged Electron `chrome-sandbox` helper into a
+root-owned temporary directory, configures the copy as mode `4755`, and exposes
+it through `CHROME_DEVEL_SANDBOX` while smoke-testing the extracted ZIP. Before
+launch, the harness requires that helper to be a root-owned regular file and
+requires its SHA-256 digest to match the helper inside the extracted ZIP. The
+aggregate qualification report retains this evidence. This preserves the
+Chromium sandbox during CI; the release workflow must not use `--no-sandbox`.

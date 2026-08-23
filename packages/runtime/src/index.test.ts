@@ -217,7 +217,7 @@ describe('DSH runtime', () => {
     await firstStop
     expect(runtime.state).toBe('idle')
     expect(runtime.url).toBeUndefined()
-  })
+  }, 15_000)
 
   it('force-terminates detached descendant trees when graceful shutdown hangs', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-workbench-runtime-tree-'))

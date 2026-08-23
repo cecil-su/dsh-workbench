@@ -24,6 +24,7 @@ const requiredFixturePaths = [
   'electron-builder.config.mjs',
   'patches/README.md',
   'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch',
+  'patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch',
   'upstream/compatibility.json',
   'upstream/version.json',
   'apps/desktop/package.json',
@@ -36,6 +37,7 @@ const requiredFixturePaths = [
   'plugins/oauth-ui/package.json',
   'scripts/package.mjs',
   'scripts/directory-picker-patch.test.mjs',
+  'scripts/subprocess-windows-hide-patch.test.mjs',
 ]
 
 after(async () => {
@@ -181,6 +183,42 @@ describe('compatibility verifier', () => {
     )
 
     await expectFailure(root, /must require staged directory-picker worker-ipc\.cjs/u)
+  })
+
+  it('rejects removal of the exact subprocess patch declaration', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'pnpm-workspace.yaml',
+      "  '@deepseek-ai/dsh-subprocess-local@0.1.1-rc.2': patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch\n",
+      '',
+    )
+
+    await expectFailure(root, /must patch @deepseek-ai\/dsh-subprocess-local@0\.1\.1-rc\.2/u)
+  })
+
+  it('rejects a subprocess patch that leaves Win32 consoles visible', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch',
+      '+\t\twindowsHide: platform === "win32",',
+      '+\t\twindowsHide: false,',
+    )
+
+    await expectFailure(root, /must hide direct Win32 subprocess console windows/u)
+  })
+
+  it('rejects omission of subprocess-local from stage verification', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'scripts/package.mjs',
+      '    access(subprocessLocal),\n',
+      '',
+    )
+
+    await expectFailure(root, /must require staged subprocess-local/u)
   })
 
   it('rejects a ranged DSH dependency in any workspace package manifest', async () => {

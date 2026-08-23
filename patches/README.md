@@ -39,3 +39,28 @@ Every patch added here must document:
   equivalent IPC and Electron-safe COM string decoding fixes, and Windows
   package verification passes real select, cancel, and abort flows without the
   patch.
+
+## `@deepseek-ai/dsh-subprocess-local@0.1.1-rc.2`
+
+- Patch: `@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch`
+- Reason: the direct subprocess implementation does not set Node's
+  `windowsHide` spawn option. When the Windows model tool starts `pwsh.exe`
+  from the GUI-hosted DSH runtime, every tool call can therefore create a
+  visible console window. The subprocess service extension point can replace
+  the whole provider, but it cannot change this spawn option without
+  duplicating the upstream process supervision, output collection, and
+  termination implementation.
+- Tracking: Workbench issue
+  [#11](https://github.com/cecil-su/dsh-workbench/issues/11). No upstream issue
+  or pull request was available when this patch was introduced.
+- Owner: DSH Workbench maintainers (`cecil-su`).
+- Introduced: 2026-08-23.
+- Protection: `scripts/subprocess-windows-hide-patch.test.mjs` locks the exact
+  installed package version and Win32-only `windowsHide` option;
+  `scripts/verify-compatibility.test.mjs` locks the patch declaration and
+  provenance; `scripts/package.mjs` requires the patched implementation in the
+  production stage and final packaged application.
+- Removal condition: delete this patch after the pinned DSH release hides
+  direct Windows subprocess console windows equivalently and a packaged
+  Windows model PowerShell tool call completes without a visible console
+  window.

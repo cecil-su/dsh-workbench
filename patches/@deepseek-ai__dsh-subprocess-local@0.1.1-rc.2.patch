@@ -1,0 +1,8 @@
+diff --git a/lib/index.js b/lib/index.js
+index 698efc9357d249cf03adf82a9962499f9455fe66..c35a3417f74546de410bd9630a917e779a1ff0de 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -805,1 +805,2 @@ function spawnSubprocess(spec, internals = {}) {
+-		detached: platform !== "win32"
++		windowsHide: platform === "win32",
++		detached: platform !== "win32"

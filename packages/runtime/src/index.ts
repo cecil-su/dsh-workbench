@@ -392,6 +392,7 @@ function readWindowsProcessTable(): DshRuntimeProcessTableEntry[] {
   ], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
   })
   return output.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line)
@@ -458,7 +459,10 @@ function signalProcessTargets(
 ): void {
   if (process.platform === 'win32') {
     for (const descendantPid of targets.pids) {
-      spawnSync('taskkill.exe', ['/pid', String(descendantPid), '/t', '/f'], { stdio: 'ignore' })
+      spawnSync('taskkill.exe', ['/pid', String(descendantPid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
     }
     return
   }
@@ -515,7 +519,10 @@ async function signalProcessTree(
   const pid = child.pid
   if (pid === undefined || pid <= 0) return
   if (process.platform === 'win32') {
-    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { stdio: 'ignore' })
+    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
     return
   }
 
@@ -650,6 +657,7 @@ export class DshRuntime {
             ELECTRON_RUN_AS_NODE: '1',
           },
           stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          windowsHide: process.platform === 'win32',
         },
       )
     } catch (error) {

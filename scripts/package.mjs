@@ -260,6 +260,14 @@ async function validateStage() {
     'lib',
     'worker-ipc.cjs',
   )
+  const subprocessLocal = join(
+    stageDir,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-subprocess-local',
+    'lib',
+    'index.js',
+  )
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
@@ -272,6 +280,7 @@ async function validateStage() {
     access(dshBin),
     access(directoryPickerWorker),
     access(directoryPickerWorkerIpc),
+    access(subprocessLocal),
     access(desktopCore),
     access(desktopCoreClient),
     access(oauthUi),
@@ -489,6 +498,14 @@ await Promise.all([
     'dsh-host-directory-picker-native',
     'lib',
     'worker-ipc.cjs',
+  )),
+  access(join(
+    packagedAppPath,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-subprocess-local',
+    'lib',
+    'index.js',
   )),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')),
 ])

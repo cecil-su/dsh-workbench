@@ -11,6 +11,8 @@ const rootFromScript = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DSH_PACKAGE_PREFIX = '@deepseek-ai/dsh'
 const DIRECTORY_PICKER_PATCH_PACKAGE = '@deepseek-ai/dsh-host-directory-picker-native'
 const DIRECTORY_PICKER_PATCH_PATH = 'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch'
+const SUBPROCESS_PATCH_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
+const SUBPROCESS_PATCH_PATH = 'patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch'
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 const EXPECTED_FIRST_PARTY_PLUGINS = Object.freeze([
   Object.freeze({
@@ -580,9 +582,92 @@ function verifyDirectoryPickerPatch({
   }
 }
 
+function verifySubprocessPatch({
+  dshVersion,
+  lock,
+  packageVerifierSource,
+  patchDocumentation,
+  patchSource,
+  rootPackage,
+  testSource,
+  workspace,
+}, issues) {
+  const patchKey = `${SUBPROCESS_PATCH_PACKAGE}@${dshVersion}`
+  record(
+    issues,
+    workspace.patchedDependencies?.[patchKey] === SUBPROCESS_PATCH_PATH,
+    `pnpm workspace must patch ${patchKey} from ${SUBPROCESS_PATCH_PATH}`,
+  )
+
+  const patchHash = lock.patchedDependencies?.[patchKey]
+  record(
+    issues,
+    typeof patchHash === 'string' && /^[a-f0-9]{64}$/u.test(patchHash),
+    `pnpm lock must record a SHA-256 patch hash for ${patchKey}`,
+  )
+  const snapshotKeys = isObject(lock.snapshots)
+    ? Object.keys(lock.snapshots).filter((key) => key.startsWith(`${patchKey}(`))
+    : []
+  record(issues, snapshotKeys.length === 1, `pnpm lock must contain exactly one patched ${patchKey} snapshot`)
+  if (typeof patchHash === 'string') {
+    for (const key of snapshotKeys) {
+      record(
+        issues,
+        key.includes(`patch_hash=${patchHash}`),
+        `pnpm lock ${patchKey} snapshot must use its declared patch hash`,
+      )
+    }
+  }
+
+  record(
+    issues,
+    patchSource.includes('diff --git a/lib/index.js b/lib/index.js')
+      && /^\+\s*windowsHide: platform === "win32",$/mu.test(patchSource),
+    'subprocess patch must hide direct Win32 subprocess console windows',
+  )
+  record(
+    issues,
+    patchDocumentation.includes(`\`${patchKey}\``)
+      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/11')
+      && patchDocumentation.includes('Owner:')
+      && patchDocumentation.includes('Introduced: 2026-08-23')
+      && patchDocumentation.includes('Removal condition:')
+      && patchDocumentation.includes('scripts/subprocess-windows-hide-patch.test.mjs'),
+    'subprocess patch documentation must record issue, owner, introduction, protection, and removal condition',
+  )
+  record(
+    issues,
+    rootPackage.scripts?.['test:scripts']?.split('scripts/subprocess-windows-hide-patch.test.mjs').length === 2
+      && testSource.includes('windowsHide: platform === "win32"')
+      && testSource.includes("assert.equal(manifest.version, '0.1.1-rc.2')"),
+    'subprocess patch regression test must cover the exact package and Win32-only hidden spawn option',
+  )
+
+  const stageAssignment = packageVerifierSource.match(new RegExp(
+    `const\\s+(\\w+)\\s*=\\s*join\\(\\s*stageDir\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-subprocess-local')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('index.js')}\\s*,?\\s*\\)`,
+    'u',
+  ))
+  record(issues, Boolean(stageAssignment), 'package verifier must resolve subprocess-local in the production stage')
+  if (stageAssignment) {
+    record(
+      issues,
+      new RegExp(`access\\(\\s*${escapeRegex(stageAssignment[1])}\\s*\\)`, 'u').test(packageVerifierSource),
+      'package verifier must require staged subprocess-local',
+    )
+  }
+  record(
+    issues,
+    new RegExp(
+      `access\\(\\s*join\\(\\s*packagedAppPath\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-subprocess-local')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('index.js')}\\s*,?\\s*\\)\\s*\\)`,
+      'u',
+    ).test(packageVerifierSource),
+    'package verifier must require packaged subprocess-local',
+  )
+}
+
 export async function verifyCompatibility(root = rootFromScript) {
   const issues = []
-  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource, patchDocumentation, patchSource, directoryPickerTestSource] = await Promise.all([
+  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource, patchDocumentation, directoryPickerPatchSource, directoryPickerTestSource, subprocessPatchSource, subprocessTestSource] = await Promise.all([
     readFile(join(root, '.gitattributes'), 'utf8'),
     readCompatibility(root),
     readFile(join(root, 'upstream', 'version.json'), 'utf8').then(JSON.parse),
@@ -597,6 +682,8 @@ export async function verifyCompatibility(root = rootFromScript) {
     readFile(join(root, 'patches', 'README.md'), 'utf8'),
     readFile(join(root, ...DIRECTORY_PICKER_PATCH_PATH.split('/')), 'utf8'),
     readFile(join(root, 'scripts', 'directory-picker-patch.test.mjs'), 'utf8'),
+    readFile(join(root, ...SUBPROCESS_PATCH_PATH.split('/')), 'utf8'),
+    readFile(join(root, 'scripts', 'subprocess-windows-hide-patch.test.mjs'), 'utf8'),
   ])
   const workspace = parsePnpmYaml(workspaceSource)
   const lock = parsePnpmYaml(lockSource)
@@ -761,9 +848,19 @@ export async function verifyCompatibility(root = rootFromScript) {
     lock,
     packageVerifierSource,
     patchDocumentation,
-    patchSource,
+    patchSource: directoryPickerPatchSource,
     rootPackage,
     testSource: directoryPickerTestSource,
+    workspace,
+  }, issues)
+  verifySubprocessPatch({
+    dshVersion,
+    lock,
+    packageVerifierSource,
+    patchDocumentation,
+    patchSource: subprocessPatchSource,
+    rootPackage,
+    testSource: subprocessTestSource,
     workspace,
   }, issues)
 

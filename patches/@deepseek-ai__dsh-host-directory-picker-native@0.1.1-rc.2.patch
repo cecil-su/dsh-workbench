@@ -1,0 +1,47 @@
+diff --git a/lib/worker.cjs b/lib/worker.cjs
+index 14f4584c748bbec5a1a0282afe486c098668dfe6..ad30e3b461fc1190bcffcab72e9ec2fb8c2cf006 100644
+--- a/lib/worker.cjs
++++ b/lib/worker.cjs
+@@ -204,12 +204,12 @@ const title = process.env.DSH_DIALOG_TITLE ?? "";
+ if (title === "") throw new Error("win32-dialog-worker: DSH_DIALOG_TITLE is required");
+ if (process.send === void 0) throw new Error("win32-dialog-worker must run as a child process with an IPC channel");
+ const send = process.send.bind(process);
+-const post = (message) => {
+-	/* v8 ignore next 3 -- disconnect needs a live IPC channel the unit lane must not sever (built-worker.e2e.ts owns the real close path). */
+-	send(message, () => {
+-		if (process.connected) process.disconnect();
+-	});
+-};
++const { createWin32DialogPost } = require("./worker-ipc.cjs");
++const post = createWin32DialogPost(
++	send,
++	() => process.connected,
++	() => process.disconnect()
++);
+ /* v8 ignore next 3 -- the handler exits(0), which would kill the unit lane; built-worker.e2e.ts owns the real disconnect lifecycle. */
+ process.on("disconnect", () => process.exit(0));
+ (async () => {
+diff --git a/lib/worker-ipc.cjs b/lib/worker-ipc.cjs
+new file mode 100644
+--- /dev/null
++++ b/lib/worker-ipc.cjs
+@@ -0,0 +1,19 @@
++"use strict";
++
++/**
++ * Create the worker-to-driver sender. The non-terminal `showing` notice must
++ * keep IPC connected so the later `done` or `error` outcome can be delivered.
++ */
++function createWin32DialogPost(send, isConnected, disconnect) {
++  return (message) => {
++    if (message.kind === "showing") {
++      send(message);
++      return;
++    }
++    send(message, () => {
++      if (isConnected()) disconnect();
++    });
++  };
++}
++
++module.exports = { createWin32DialogPost };

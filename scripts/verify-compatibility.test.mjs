@@ -22,6 +22,8 @@ const requiredFixturePaths = [
   'pnpm-workspace.yaml',
   'pnpm-lock.yaml',
   'electron-builder.config.mjs',
+  'patches/README.md',
+  'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch',
   'upstream/compatibility.json',
   'upstream/version.json',
   'apps/desktop/package.json',
@@ -33,6 +35,7 @@ const requiredFixturePaths = [
   'plugins/diagnostics-ui/scripts/build-client.mjs',
   'plugins/oauth-ui/package.json',
   'scripts/package.mjs',
+  'scripts/directory-picker-patch.test.mjs',
 ]
 
 after(async () => {
@@ -127,6 +130,45 @@ describe('compatibility verifier', () => {
     )
 
     await expectFailure(root, /pnpm catalog @deepseek-ai\/dsh must pin exact/u)
+  })
+
+  it('rejects removal of the exact directory-picker patch declaration', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'pnpm-workspace.yaml',
+      [
+        'patchedDependencies:',
+        "  '@deepseek-ai/dsh-host-directory-picker-native@0.1.1-rc.2': patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch",
+      ].join('\n'),
+      'patchedDependencies:',
+    )
+
+    await expectFailure(root, /must patch @deepseek-ai\/dsh-host-directory-picker-native@0\.1\.1-rc\.2/u)
+  })
+
+  it('rejects a directory-picker patch that disconnects the showing notice', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch',
+      '+    if (message.kind === "showing") {',
+      '+    if (message.kind === "done") {',
+    )
+
+    await expectFailure(root, /must keep showing non-terminal and flush terminal outcomes/u)
+  })
+
+  it('rejects omission of the patched helper from stage verification', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'scripts/package.mjs',
+      '    access(directoryPickerWorkerIpc),\n',
+      '',
+    )
+
+    await expectFailure(root, /must require staged directory-picker worker-ipc\.cjs/u)
   })
 
   it('rejects a ranged DSH dependency in any workspace package manifest', async () => {

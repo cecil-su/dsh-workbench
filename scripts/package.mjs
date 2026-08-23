@@ -244,6 +244,22 @@ async function readJson(path) {
 
 async function validateStage() {
   const dshBin = join(stageDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  const directoryPickerWorker = join(
+    stageDir,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-host-directory-picker-native',
+    'lib',
+    'worker.cjs',
+  )
+  const directoryPickerWorkerIpc = join(
+    stageDir,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-host-directory-picker-native',
+    'lib',
+    'worker-ipc.cjs',
+  )
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
@@ -254,6 +270,8 @@ async function validateStage() {
     access(join(stageDir, 'lib', 'main.js')),
     access(join(stageDir, 'lib', 'preload.cjs')),
     access(dshBin),
+    access(directoryPickerWorker),
+    access(directoryPickerWorkerIpc),
     access(desktopCore),
     access(desktopCoreClient),
     access(oauthUi),
@@ -456,6 +474,22 @@ const packagedAppPath = join(resourcesPath, 'app')
 await Promise.all([
   access(join(packagedAppPath, 'lib', 'main.js')),
   access(join(packagedAppPath, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')),
+  access(join(
+    packagedAppPath,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-host-directory-picker-native',
+    'lib',
+    'worker.cjs',
+  )),
+  access(join(
+    packagedAppPath,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-host-directory-picker-native',
+    'lib',
+    'worker-ipc.cjs',
+  )),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')),
 ])
 await validateSymlinks(join(packagedAppPath, 'node_modules'), join(packagedAppPath, 'node_modules'))

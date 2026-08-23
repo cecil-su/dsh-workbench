@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { diagnosticConsoleProbeEvidence } from './package-smoke-evidence.mjs'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const manifestPath = join(root, 'dist', 'artifacts', 'package-manifest.json')
 const smokeOutputDirectory = join(root, 'dist', 'smoke')
@@ -276,6 +278,7 @@ async function runPackagedApp(
           cleanupError: 'Packaged process has no PID for timeout cleanup',
           code: child.exitCode,
           forbiddenOutputExposed,
+          parentStreamsRemapped: useXvfb,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -288,6 +291,7 @@ async function runPackagedApp(
         () => finish(undefined, {
           code: child.exitCode,
           forbiddenOutputExposed,
+          parentStreamsRemapped: useXvfb,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -297,6 +301,7 @@ async function runPackagedApp(
           cleanupError: asError(error).message,
           code: child.exitCode,
           forbiddenOutputExposed,
+          parentStreamsRemapped: useXvfb,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -307,7 +312,15 @@ async function runPackagedApp(
 
     child.once('close', (code, signal) => {
       if (timedOut) return
-      finish(undefined, { code, forbiddenOutputExposed, signal, stderr, stdout, timedOut })
+      finish(undefined, {
+        code,
+        forbiddenOutputExposed,
+        parentStreamsRemapped: useXvfb,
+        signal,
+        stderr,
+        stdout,
+        timedOut,
+      })
     })
   })
 }
@@ -321,17 +334,23 @@ function assertDiagnosticConsoleEvidence(result, probe, phase) {
     result.forbiddenOutputExposed === false,
     `Packaged smoke ${phase} console exposed the canary`,
   )
-  assertSmoke(
-    result.stdout.includes(`${probe.marker}-stdout-before`)
-      && result.stdout.includes(`${probe.marker}-stdout-after`),
-    `Packaged smoke ${phase} stdout omitted the DSH output probe`,
-  )
-  assertSmoke(
-    result.stderr.includes(`${probe.marker}-stderr-before`)
-      && result.stderr.includes(`${probe.marker}-stderr-after`),
-    `Packaged smoke ${phase} stderr omitted the DSH output probe`,
-  )
   const combined = `${result.stdout}\n${result.stderr}`
+  const probeEvidence = diagnosticConsoleProbeEvidence(result, probe.marker)
+  if (result.parentStreamsRemapped) {
+    assertSmoke(
+      probeEvidence.combined,
+      `Packaged smoke ${phase} remapped console omitted the DSH output probe`,
+    )
+  } else {
+    assertSmoke(
+      probeEvidence.stdout,
+      `Packaged smoke ${phase} stdout omitted the DSH output probe`,
+    )
+    assertSmoke(
+      probeEvidence.stderr,
+      `Packaged smoke ${phase} stderr omitted the DSH output probe`,
+    )
+  }
   assertSmoke(combined.includes('[REDACTED]'), `Packaged smoke ${phase} console omitted redaction`)
   assertSmoke(combined.includes('safe=yes'), `Packaged smoke ${phase} console omitted benign output`)
   assertSmoke(!combined.includes(probe.canary), `Packaged smoke ${phase} console exposed the canary`)

@@ -328,12 +328,13 @@ describe('diagnostics client bundle', () => {
 
   it('distinguishes missing, duplicate, disabled, transient, failed, null, and wrong modules', async () => {
     const prepared = await loadClient()
-    const [authorization, desktopCore, oauthUi, diagnostics] = prepared.exports.REQUIRED_ENTRIES
-    if (!authorization || !desktopCore || !oauthUi || !diagnostics) throw new Error('Expected entries missing')
+    const [authorization, desktopCore, gptTools, oauthUi, diagnostics] = prepared.exports.REQUIRED_ENTRIES
+    if (!authorization || !desktopCore || !gptTools || !oauthUi || !diagnostics) throw new Error('Expected entries missing')
     const result = prepared.exports.assessWorkbenchCompatibility({ dshVersion: '0.0.0' }, {
       entries: [
         { ...desktopCore, enabled: true, fiberPhase: 'active' },
         { ...desktopCore, enabled: true, fiberPhase: 'active' },
+        { ...gptTools, enabled: true, fiberPhase: 'active' },
         { ...oauthUi, enabled: false, fiberPhase: null },
         { ...diagnostics, enabled: true, fiberPhase: 'loading' },
       ],
@@ -342,6 +343,7 @@ describe('diagnostics client bundle', () => {
     expect(result.checks).toEqual([
       expect.objectContaining({ entryId: authorization.entryId, status: 'missing' }),
       expect.objectContaining({ entryId: desktopCore.entryId, status: 'duplicate' }),
+      expect.objectContaining({ entryId: gptTools.entryId, status: 'active' }),
       expect.objectContaining({ entryId: oauthUi.entryId, status: 'disabled' }),
       expect.objectContaining({ entryId: diagnostics.entryId, status: 'transitioning' }),
     ])

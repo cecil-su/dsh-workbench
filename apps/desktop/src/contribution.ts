@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 const require = createRequire(import.meta.url)
 export const DESKTOP_CORE_SPECIFIER = '@dsh-workbench/desktop-core'
+export const GPT_TOOLS_SPECIFIER = '@dsh-workbench/gpt-tools'
 export const OAUTH_UI_SPECIFIER = '@dsh-workbench/oauth-ui'
 export const DIAGNOSTICS_UI_SPECIFIER = '@dsh-workbench/diagnostics-ui'
 export const DSH_AUTHORIZATION_SPECIFIER = '@deepseek-ai/dsh-authorization'
@@ -12,6 +13,7 @@ export const DSH_AUTHORIZATION_SPECIFIER = '@deepseek-ai/dsh-authorization'
 export interface DesktopCoreContribution {
   diagnosticsEntry: string
   entry: string
+  gptToolsEntry: string
   oauthEntry: string
   patch: string
 }
@@ -20,6 +22,7 @@ export function renderDesktopCorePatch(
   entry: string,
   oauthEntry: string = OAUTH_UI_SPECIFIER,
   diagnosticsEntry: string = DIAGNOSTICS_UI_SPECIFIER,
+  gptToolsEntry: string = GPT_TOOLS_SPECIFIER,
 ): string {
   return `${JSON.stringify([
     {
@@ -31,6 +34,10 @@ export function renderDesktopCorePatch(
         {
           id: 'dsh-workbench-desktop-core',
           name: entry,
+        },
+        {
+          id: 'dsh-workbench-gpt-tools',
+          name: gptToolsEntry,
         },
         {
           id: 'dsh-workbench-oauth-ui',
@@ -62,6 +69,7 @@ export async function prepareDesktopCoreContribution(
   userDataPath: string,
 ): Promise<DesktopCoreContribution> {
   const entry = require.resolve('@dsh-workbench/desktop-core')
+  const gptToolsEntry = require.resolve('@dsh-workbench/gpt-tools')
   const oauthEntry = require.resolve('@dsh-workbench/oauth-ui')
   const diagnosticsEntry = require.resolve('@dsh-workbench/diagnostics-ui')
   const contributionPath = join(userDataPath, 'workbench')
@@ -74,6 +82,7 @@ export async function prepareDesktopCoreContribution(
       DESKTOP_CORE_SPECIFIER,
       OAUTH_UI_SPECIFIER,
       DIAGNOSTICS_UI_SPECIFIER,
+      GPT_TOOLS_SPECIFIER,
     ), {
       encoding: 'utf8',
       flag: 'wx',
@@ -88,5 +97,5 @@ export async function prepareDesktopCoreContribution(
     await rm(temporaryPatch, { force: true }).catch(() => {})
   }
 
-  return { diagnosticsEntry, entry, oauthEntry, patch }
+  return { diagnosticsEntry, entry, gptToolsEntry, oauthEntry, patch }
 }

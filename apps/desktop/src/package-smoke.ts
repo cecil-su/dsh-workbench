@@ -688,6 +688,7 @@ async function verifyDiagnosticsUi(
     const expected = [
       "dsh-workbench-authorization",
       "dsh-workbench-desktop-core",
+      "dsh-workbench-gpt-tools",
       "dsh-workbench-oauth-ui",
       "dsh-workbench-diagnostics-ui",
     ]

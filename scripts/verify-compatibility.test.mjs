@@ -34,6 +34,7 @@ const requiredFixturePaths = [
   'plugins/diagnostics-ui/package.json',
   'plugins/diagnostics-ui/src/client.js',
   'plugins/diagnostics-ui/scripts/build-client.mjs',
+  'plugins/gpt-tools/package.json',
   'plugins/oauth-ui/package.json',
   'scripts/package.mjs',
   'scripts/directory-picker-patch.test.mjs',
@@ -99,6 +100,7 @@ describe('compatibility verifier', () => {
       'packages/runtime',
       'plugins/desktop-core',
       'plugins/diagnostics-ui',
+      'plugins/gpt-tools',
       'plugins/oauth-ui',
     ])
   })
@@ -291,7 +293,7 @@ describe('compatibility verifier', () => {
   it('rejects first-party plugin drift in metadata, overlay, desktop dependencies, and packaging checks', async () => {
     const metadataRoot = await createFixture()
     await editJson(metadataRoot, 'upstream/compatibility.json', (value) => { value.firstPartyPlugins.pop() })
-    await expectFailure(metadataRoot, /exactly three first-party plugins/u)
+    await expectFailure(metadataRoot, /exactly four first-party plugins/u)
 
     const overlayRoot = await createFixture()
     await replaceExactlyOnce(overlayRoot, 'apps/desktop/src/contribution.ts', "id: 'dsh-workbench-oauth-ui'", "id: 'dsh-workbench-oauth-ui-missing'")

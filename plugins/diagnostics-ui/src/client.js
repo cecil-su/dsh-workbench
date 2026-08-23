@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
     const REQUIRED_ENTRIES = Object.freeze([
       Object.freeze({ entryId: "dsh-workbench-authorization", moduleName: "@deepseek-ai/dsh-authorization" }),
       Object.freeze({ entryId: "dsh-workbench-desktop-core", moduleName: "@dsh-workbench/desktop-core" }),
+      Object.freeze({ entryId: "dsh-workbench-gpt-tools", moduleName: "@dsh-workbench/gpt-tools" }),
       Object.freeze({ entryId: "dsh-workbench-oauth-ui", moduleName: "@dsh-workbench/oauth-ui" }),
       Object.freeze({ entryId: "dsh-workbench-diagnostics-ui", moduleName: "@dsh-workbench/diagnostics-ui" }),
     ]);

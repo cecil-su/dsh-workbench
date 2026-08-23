@@ -27,6 +27,10 @@ const EXPECTED_FIRST_PARTY_PLUGINS = Object.freeze([
     entryId: 'dsh-workbench-diagnostics-ui',
     packageName: '@dsh-workbench/diagnostics-ui',
   }),
+  Object.freeze({
+    entryId: 'dsh-workbench-gpt-tools',
+    packageName: '@dsh-workbench/gpt-tools',
+  }),
 ])
 const DEPENDENCY_GROUPS = Object.freeze([
   'dependencies',
@@ -286,7 +290,7 @@ function verifyCompatibilityMetadata(compatibility, issues) {
   const plugins = compatibility.firstPartyPlugins
   record(issues, Array.isArray(plugins), 'compatibility firstPartyPlugins must be an array')
   if (!Array.isArray(plugins)) return
-  record(issues, plugins.length === EXPECTED_FIRST_PARTY_PLUGINS.length, 'compatibility must declare exactly three first-party plugins')
+  record(issues, plugins.length === EXPECTED_FIRST_PARTY_PLUGINS.length, 'compatibility must declare exactly four first-party plugins')
   const identities = new Set()
   for (const expected of EXPECTED_FIRST_PARTY_PLUGINS) {
     const matches = plugins.filter((plugin) => (
@@ -439,8 +443,8 @@ function verifyLockToolchainResolutions(lock, versions, issues) {
 }
 
 function verifyOverlay(source, plugins, issues) {
-  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
-  const argumentNames = ['entry', 'oauthEntry', 'diagnosticsEntry']
+  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
+  const argumentNames = ['entry', 'oauthEntry', 'diagnosticsEntry', 'gptToolsEntry']
   for (const [index, plugin] of plugins.entries()) {
     const match = source.match(new RegExp(
       `\\{\\s*id:\\s*${quoted(plugin.entryId)}\\s*,\\s*name:\\s*([^,}\\n]+)`,

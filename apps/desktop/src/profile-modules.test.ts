@@ -23,6 +23,10 @@ describe('prepareProfileModuleFallback', () => {
 
     expect((await lstat(link)).isSymbolicLink()).toBe(true)
     expect(await realpath(link)).toBe(await realpath(expected))
+    const gptToolsLink = join(dshHome, 'profiles', 'node_modules', '@dsh-workbench', 'gpt-tools')
+    const expectedGptTools = dirname(require.resolve('@dsh-workbench/gpt-tools/package.json'))
+    expect((await lstat(gptToolsLink)).isSymbolicLink()).toBe(true)
+    expect(await realpath(gptToolsLink)).toBe(await realpath(expectedGptTools))
     const oauthLink = join(dshHome, 'profiles', 'node_modules', '@dsh-workbench', 'oauth-ui')
     const expectedOauth = dirname(require.resolve('@dsh-workbench/oauth-ui/package.json'))
     expect((await lstat(oauthLink)).isSymbolicLink()).toBe(true)

@@ -14,6 +14,7 @@
 ```text
 apps/desktop -> packages/runtime      -> @deepseek-ai/dsh
              -> plugins/desktop-core -> @deepseek-ai/cordis
+             -> plugins/gpt-tools    -> public DSH tool/attachment contracts
              -> plugins/oauth-ui     -> public DSH authorization contracts
              -> plugins/diagnostics-ui -> official plugin inventory Remote
 ```
@@ -68,6 +69,13 @@ Remote, while the host exposes a closed preload API for a sanitized in-memory
 log and three fixed recovery actions. Runtime/window replacement remains owned
 by the main-process transition coordinator; see
 [Diagnostics and repair](diagnostics.md).
+
+GPT web search and image generation live in the `gpt-tools` plugin. It shadows
+the existing provider-neutral `web_search` tool only inside agents whose model
+id begins with `gpt`, calls OpenAI's hosted search with the profile-owned
+`OPENAI_API_KEY` credential reference, and adds `generate_image`. Generated
+bytes pass through DSH's attachment service before a durable image reference is
+placed in the tool result; provider URLs and base64 never enter the session log.
 
 Cross-platform release qualification builds on the packaged smoke boundary.
 The compatibility lock binds the pinned DSH, Electron toolchain, first-party

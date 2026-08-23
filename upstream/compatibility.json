@@ -20,6 +20,10 @@
     {
       "entryId": "dsh-workbench-diagnostics-ui",
       "packageName": "@dsh-workbench/diagnostics-ui"
+    },
+    {
+      "entryId": "dsh-workbench-gpt-tools",
+      "packageName": "@dsh-workbench/gpt-tools"
     }
   ]
 }

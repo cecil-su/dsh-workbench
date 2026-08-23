@@ -270,6 +270,8 @@ async function validateStage() {
   )
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
+  const gptTools = join(stageDir, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')
+  const gptToolsClient = join(stageDir, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'client.js')
   const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
   const oauthUiClient = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'client.js')
   const diagnosticsUi = join(stageDir, 'node_modules', '@dsh-workbench', 'diagnostics-ui', 'lib', 'index.js')
@@ -283,6 +285,8 @@ async function validateStage() {
     access(subprocessLocal),
     access(desktopCore),
     access(desktopCoreClient),
+    access(gptTools),
+    access(gptToolsClient),
     access(oauthUi),
     access(oauthUiClient),
     access(diagnosticsUi),
@@ -508,6 +512,8 @@ await Promise.all([
     'index.js',
   )),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')),
+  access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')),
+  access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'client.js')),
 ])
 await validateSymlinks(join(packagedAppPath, 'node_modules'), join(packagedAppPath, 'node_modules'))
 await validateProductionManifests(packagedAppPath)

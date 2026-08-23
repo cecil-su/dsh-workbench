@@ -94,6 +94,11 @@ interface PackageSmokeReport {
     message: string
     name: string
   }
+  authorization: {
+    officialFlowRegistered?: boolean
+    uiMounted?: boolean
+    valueFreeSnapshotVerified?: boolean
+  }
   profiles: {
     activeProfileRestartPersistenceVerified?: boolean
     ambientCredentialFilteringVerified?: boolean
@@ -120,6 +125,7 @@ interface PackageSmokeReport {
     exitCode?: number | null
     expectedExit?: boolean
     httpBootPayload?: boolean
+    oauthUiEntry?: string
     pid?: number
     pidAliveAfterStop?: boolean
     portOpenAfterStop?: boolean
@@ -311,6 +317,84 @@ async function openProfilesUi(
       return Boolean(row && row.innerText.includes(profile.name))
     })
   })()`, 'the populated Profiles section')
+}
+
+async function verifyAuthorizationUi(window: BrowserWindow): Promise<void> {
+  await waitForRendererCondition(window, `(() => {
+    const labels = new Set(["Sign-in & authorization", "登录与授权"])
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => labels.has(candidate.innerText.trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`, 'the authorization navigation item')
+
+  await waitForRendererCondition(window, `(() => {
+    const root = document.querySelector("[data-workbench-authorization]")
+    const row = root?.querySelector('[data-authorization-key="llm-pi-ai/openai-codex"]')
+    return Boolean(row && !root.querySelector("[role=alert]"))
+  })()`, 'the official ChatGPT authorization row')
+
+  const serialized = await window.webContents.executeJavaScript(`(async () => {
+    const response = await fetch(${JSON.stringify('/workbench/authorization')}, {
+      body: JSON.stringify({ action: "snapshot" }),
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+    return JSON.stringify({ status: response.status, payload: await response.json() })
+  })()`, true) as unknown
+  assertSmoke(typeof serialized === 'string', 'Authorization UI returned an unserializable snapshot')
+  const response = JSON.parse(serialized) as {
+    payload?: {
+      ok?: unknown
+      value?: { entries?: unknown }
+    }
+    status?: unknown
+  }
+  assertSmoke(response.status === 200 && response.payload?.ok === true, 'Authorization snapshot request failed')
+  const entries = response.payload.value?.entries
+  assertSmoke(Array.isArray(entries), 'Authorization snapshot omitted its entry list')
+  const official = entries.find((entry) => (
+    typeof entry === 'object'
+    && entry !== null
+    && (entry as { key?: unknown }).key === 'llm-pi-ai/openai-codex'
+  )) as { configured?: unknown; methods?: unknown } | undefined
+  assertSmoke(official, 'Official ChatGPT authorization flow is missing')
+  assertSmoke(official.configured === false, 'Package smoke unexpectedly used an existing ChatGPT credential')
+  assertSmoke(
+    Array.isArray(official.methods)
+    && official.methods.some((method) => (
+      typeof method === 'object'
+      && method !== null
+      && (method as { id?: unknown }).id === 'oauth'
+    )),
+    'Official ChatGPT OAuth method is missing',
+  )
+  const forbiddenFields = new Set(['accessToken', 'payload', 'refreshToken', 'secret', 'token'])
+  const containsForbiddenField = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(containsForbiddenField)
+    if (typeof value !== 'object' || value === null) return false
+    return Object.entries(value).some(([key, child]) => (
+      forbiddenFields.has(key) || containsForbiddenField(child)
+    ))
+  }
+  assertSmoke(!containsForbiddenField(entries), 'Authorization read response exposed a credential value field')
+
+  await waitForRendererCondition(window, `(() => {
+    const labels = new Set(["Profiles", "配置档案"])
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => labels.has(candidate.innerText.trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`, 'the Profiles navigation item after authorization verification')
+  await waitForRendererCondition(
+    window,
+    'Boolean(document.querySelector("[data-workbench-profiles]"))',
+    'the restored Profiles section',
+  )
 }
 
 async function selectProfileFromRenderer(window: BrowserWindow, profileId: string): Promise<void> {
@@ -696,6 +780,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       userDataPath: app.getPath('userData'),
       version: app.getVersion(),
     },
+    authorization: {},
     profiles: {},
     runtime: {},
     phase: options.phase,
@@ -730,10 +815,15 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     const dshBin = await realpath(resolveDshBin())
     const desktopCore = await prepareDesktopCoreContribution(options.userDataPath)
     const desktopCoreEntry = await realpath(desktopCore.entry)
+    const oauthUiEntry = await realpath(desktopCore.oauthEntry)
     assertSmoke(isPathInside(packagedAppRoot, dshBin), 'DSH executable escaped the packaged application')
     assertSmoke(
       isPathInside(packagedAppRoot, desktopCoreEntry),
       'Desktop Core entry escaped the packaged application',
+    )
+    assertSmoke(
+      isPathInside(packagedAppRoot, oauthUiEntry),
+      'OAuth UI entry escaped the packaged application',
     )
 
     const dshPackage = JSON.parse(await readFile(join(dirname(dirname(dshBin)), 'package.json'), 'utf8')) as {
@@ -743,6 +833,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     report.runtime.dshBin = dshBin
     report.runtime.dshVersion = dshPackage.version
     report.runtime.desktopCoreEntry = desktopCoreEntry
+    report.runtime.oauthUiEntry = oauthUiEntry
 
     const allocatedProfileIds = ['package-smoke-second', 'package-smoke-ui']
     const profiles = new ProfileStore(options.userDataPath, {
@@ -917,6 +1008,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       html.includes('@dsh-workbench/desktop-core'),
       'Packaged DSH boot payload is missing the Desktop Core client bundle',
     )
+    assertSmoke(
+      html.includes('@dsh-workbench/oauth-ui'),
+      'Packaged DSH boot payload is missing the OAuth UI client bundle',
+    )
     report.runtime.httpBootPayload = true
     report.profiles.clientBundleInBootPayload = true
 
@@ -949,6 +1044,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       'Profile bridge did not return every expected profile',
     )
     await openProfilesUi(initialWindow.window, expectedProfiles())
+    await verifyAuthorizationUi(initialWindow.window)
+    report.authorization.officialFlowRegistered = true
+    report.authorization.uiMounted = true
+    report.authorization.valueFreeSnapshotVerified = true
     if (options.phase === 'setup') {
       uiProfile = await exerciseProfileLifecycleFromRenderer(initialWindow.window, profiles)
       assertSmoke(uiProfile.id === 'package-smoke-ui', 'Renderer-created profile used an unexpected id')

@@ -281,6 +281,9 @@ function validateReport(report, context) {
   assertSmoke(report.profiles?.profileUiMounted === true, 'Packaged Profiles UI was not verified')
   assertSmoke(report.profiles?.profileUiLifecycleVerified === true, 'Packaged Profiles UI lifecycle was not verified')
   assertSmoke(report.profiles?.clientBundleInBootPayload === true, 'Packaged profile client bundle was not verified')
+  assertSmoke(report.authorization?.uiMounted === true, 'Packaged authorization UI was not verified')
+  assertSmoke(report.authorization?.officialFlowRegistered === true, 'Packaged official authorization flow was not registered')
+  assertSmoke(report.authorization?.valueFreeSnapshotVerified === true, 'Packaged authorization snapshot was not verified as value-free')
 
   const execPath = resolve(report.app.execPath)
   const resourcesPath = resolve(report.app.resourcesPath)

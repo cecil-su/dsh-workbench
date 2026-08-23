@@ -27,7 +27,7 @@ Electron desktop host
         |
         `-- product plugins
                 +-- desktop-core
-                `-- oauth-ui (planned)
+                `-- oauth-ui
 ```
 
 The project does not fork or modify DSH Core. Any temporary upstream patch must
@@ -59,6 +59,10 @@ workspaces, and persistent browser partitions. See
 [Workbench profiles](docs/profiles.md) for migration, recovery, and credential
 ownership details.
 
+Settings > Sign-in & authorization delegates provider login and local sign-out
+to the official services in the pinned DSH release. Workbench never owns or
+returns credential values. See [Authorization](docs/authorization.md).
+
 Run `pnpm test:integration` to exercise the real DSH process, dynamic port,
 Workbench overlay, Web payload, and graceful IPC shutdown.
 
@@ -74,7 +78,7 @@ for the artifact matrix, smoke guarantees, and signing boundary.
 apps/desktop/          Electron main and preload processes
 packages/runtime/      DSH child-process lifecycle and readiness checks
 plugins/desktop-core/  First-party Cordis plugin entrypoint
-plugins/oauth-ui/      Planned ChatGPT/Codex authorization UI
+plugins/oauth-ui/      Official DSH authorization controls
 docs/                  Architecture and maintenance decisions
 patches/               Exceptional, temporary upstream patches only
 upstream/              Exact upstream version metadata

@@ -14,6 +14,7 @@
 ```text
 apps/desktop -> packages/runtime      -> @deepseek-ai/dsh
              -> plugins/desktop-core -> @deepseek-ai/cordis
+             -> plugins/oauth-ui     -> public DSH authorization contracts
 ```
 
 Upstream packages never import Workbench packages. Product plugins may depend
@@ -56,5 +57,10 @@ own settings and credentials under the selected `DSH_HOME`, while the
 [Workbench profiles](profiles.md) for the storage, migration, recovery, and
 credential boundaries.
 
-Signing, auto-update, tray integration, and OAuth UI follow only after the
-lifecycle and cross-platform package acceptance are reliable.
+Official authorization builds on the profile boundary. The `oauth-ui` plugin
+renders DSH's neutral interaction vocabulary and delegates storage to the
+active profile's official credential provider; see [Authorization](authorization.md).
+
+Signing, auto-update, and native lifecycle integration follow only after the
+runtime, profiles, authorization, and cross-platform package acceptance are
+reliable.

@@ -80,6 +80,38 @@ describe('desktop DSH lifecycle', () => {
     const html = await response.text()
     expect(html).toContain('__DSH_BOOT__')
     expect(html).toContain('@dsh-workbench/desktop-core')
+    expect(html).toContain('@dsh-workbench/oauth-ui')
+
+    const authorizationResponse = await fetch(
+      new URL('/workbench/authorization', ready.url),
+      {
+        body: JSON.stringify({ action: 'snapshot' }),
+        headers: {
+          'content-type': 'application/json',
+          origin: new URL(ready.url).origin,
+          'sec-fetch-site': 'same-origin',
+        },
+        method: 'POST',
+      },
+    )
+    expect(authorizationResponse.status).toBe(200)
+    const authorizationPayload = await authorizationResponse.json() as {
+      ok: boolean
+      value: {
+        entries: Array<{
+          configured: boolean
+          key: string
+          methods: Array<{ id: string; label: string }>
+        }>
+      }
+    }
+    expect(authorizationPayload.ok).toBe(true)
+    expect(authorizationPayload.value.entries).toContainEqual(expect.objectContaining({
+      configured: false,
+      key: 'llm-pi-ai/openai-codex',
+      methods: expect.arrayContaining([expect.objectContaining({ id: 'oauth' })]),
+    }))
+    expect(JSON.stringify(authorizationPayload)).not.toContain('payload')
 
     await runtime.stop()
     expect(runtime.state).toBe('idle')

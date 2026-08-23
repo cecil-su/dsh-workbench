@@ -241,12 +241,16 @@ async function validateStage() {
   const dshBin = join(stageDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
+  const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
+  const oauthUiClient = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'client.js')
   await Promise.all([
     access(join(stageDir, 'lib', 'main.js')),
     access(join(stageDir, 'lib', 'preload.cjs')),
     access(dshBin),
     access(desktopCore),
     access(desktopCoreClient),
+    access(oauthUi),
+    access(oauthUiClient),
   ])
   await validateSymlinks(stageDir, stageDir)
   return readJson(join(dirname(dirname(dshBin)), 'package.json'))

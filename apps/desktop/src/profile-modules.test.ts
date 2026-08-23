@@ -23,6 +23,10 @@ describe('prepareProfileModuleFallback', () => {
 
     expect((await lstat(link)).isSymbolicLink()).toBe(true)
     expect(await realpath(link)).toBe(await realpath(expected))
+    const oauthLink = join(dshHome, 'profiles', 'node_modules', '@dsh-workbench', 'oauth-ui')
+    const expectedOauth = dirname(require.resolve('@dsh-workbench/oauth-ui/package.json'))
+    expect((await lstat(oauthLink)).isSymbolicLink()).toBe(true)
+    expect(await realpath(oauthLink)).toBe(await realpath(expectedOauth))
     expect(() => prepareProfileModuleFallback(dshHome)).not.toThrow()
   })
 

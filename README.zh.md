@@ -24,7 +24,7 @@ Electron 桌面宿主
         |
         `-- 产品插件
                 +-- desktop-core
-                `-- oauth-ui（规划中）
+                `-- oauth-ui
 ```
 
 本项目不 fork、不直接修改 DSH Core。任何不得不使用的上游临时补丁，都必须在
@@ -52,6 +52,10 @@ Electron 应用的 `userData` 目录中。桌面宿主还会加载 Workbench 自
 Settings > Profiles 页面可以创建和切换彼此隔离的 DSH Home、工作目录与持久化浏览器
 分区。迁移、恢复以及凭据归属边界见 [Workbench Profiles](docs/profiles.md)。
 
+Settings > Sign-in & authorization 会把服务商登录及本地退出登录交给锁定版 DSH
+的官方服务处理；Workbench 不持有也不返回凭据值。详见
+[授权边界](docs/authorization.md)。
+
 运行 `pnpm test:integration` 可以验证真实 DSH 进程、动态端口、Workbench overlay、
 Web 载荷和 IPC 优雅关闭。
 
@@ -65,7 +69,7 @@ CI 分发格式与校验和。产物矩阵、冒烟保证和签名边界见[打�
 apps/desktop/          Electron 主进程与 preload
 packages/runtime/      DSH 子进程生命周期与就绪检测
 plugins/desktop-core/  第一方 Cordis 插件入口
-plugins/oauth-ui/      规划中的 ChatGPT/Codex 授权界面
+plugins/oauth-ui/      DSH 官方授权控制界面
 docs/                  架构和维护决策
 patches/               仅允许临时的上游兼容补丁
 upstream/              上游精确版本记录

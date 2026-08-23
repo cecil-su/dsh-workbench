@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   DESKTOP_CORE_SPECIFIER,
+  DSH_AUTHORIZATION_SPECIFIER,
+  OAUTH_UI_SPECIFIER,
   prepareDesktopCoreContribution,
   renderDesktopCorePatch,
 } from './contribution.js'
@@ -19,12 +21,20 @@ afterEach(async () => {
 
 describe('desktop DSH contribution', () => {
   it('renders a concrete loader entry without runtime expressions', () => {
-    expect(JSON.parse(renderDesktopCorePatch('/app/desktop-core.js'))).toEqual([
+    expect(JSON.parse(renderDesktopCorePatch('/app/desktop-core.js', '/app/oauth-ui.js'))).toEqual([
       {
         insert: [
           {
+            id: 'dsh-workbench-authorization',
+            name: DSH_AUTHORIZATION_SPECIFIER,
+          },
+          {
             id: 'dsh-workbench-desktop-core',
             name: '/app/desktop-core.js',
+          },
+          {
+            id: 'dsh-workbench-oauth-ui',
+            name: '/app/oauth-ui.js',
           },
         ],
       },
@@ -39,6 +49,7 @@ describe('desktop DSH contribution', () => {
     const patch = JSON.parse(await readFile(contribution.patch, 'utf8')) as unknown
 
     expect(contribution.entry).toContain(join('plugins', 'desktop-core', 'lib', 'index.js'))
+    expect(contribution.oauthEntry).toContain(join('plugins', 'oauth-ui', 'lib', 'index.js'))
     expect(contribution.patch).toBe(
       join(userDataPath, 'workbench', 'desktop-core.patch.json'),
     )
@@ -46,8 +57,16 @@ describe('desktop DSH contribution', () => {
       {
         insert: [
           {
+            id: 'dsh-workbench-authorization',
+            name: DSH_AUTHORIZATION_SPECIFIER,
+          },
+          {
             id: 'dsh-workbench-desktop-core',
             name: DESKTOP_CORE_SPECIFIER,
+          },
+          {
+            id: 'dsh-workbench-oauth-ui',
+            name: OAUTH_UI_SPECIFIER,
           },
         ],
       },

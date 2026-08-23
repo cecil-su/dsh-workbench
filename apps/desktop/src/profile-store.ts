@@ -215,7 +215,10 @@ async function readRegistryFile(path: string): Promise<ReadRegistryResult> {
 }
 
 async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r')
+  // FlushFileBuffers requires a writable handle on Windows. These files are
+  // private temporary snapshots owned by the store, so opening them for
+  // update preserves the durability barrier on every supported platform.
+  const handle = await open(path, 'r+')
   try {
     await handle.sync()
   } finally {

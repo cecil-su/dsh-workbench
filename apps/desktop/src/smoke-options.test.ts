@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { parsePackageSmokeOptions } from './smoke-options.js'
@@ -15,8 +17,8 @@ describe('package smoke options', () => {
       '--dsh-workbench-smoke-user-data=/private/tmp/smoke/isolated-user-data',
     ])).toEqual({
       phase: 'verify',
-      reportPath: '/private/tmp/smoke/reports/result.json',
-      userDataPath: '/private/tmp/smoke/isolated-user-data',
+      reportPath: resolve('/private/tmp/smoke/reports/result.json'),
+      userDataPath: resolve('/private/tmp/smoke/isolated-user-data'),
     })
   })
 

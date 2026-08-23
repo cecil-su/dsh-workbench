@@ -1,0 +1,90 @@
+name: Unsigned release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+            arch: x64
+          - id: macos-arm64
+            os: macos-15
+            arch: arm64
+          - id: windows-x64
+            os: windows-2022
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      DSH_WORKBENCH_EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes xvfb
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/verify-release-ref.mjs
+      - run: pnpm check
+      - run: pnpm test:integration
+      - run: pnpm package:artifacts
+      - run: pnpm test:package
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-workbench-${{ matrix.id }}-unsigned-ci
+          path: dist/release-upload/*
+          if-no-files-found: error
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-workbench-${{ matrix.id }}-diagnostics
+          path: dist/smoke/package-smoke-*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  qualification:
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-workbench-*-unsigned-ci
+          path: dist/release-evidence
+          merge-multiple: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-workbench-*-diagnostics
+          path: dist/release-evidence
+          merge-multiple: false
+      - run: node scripts/verify-release-matrix.mjs dist/release-evidence dist/release-qualification.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-workbench-release-qualification
+          path: dist/release-qualification.json
+          if-no-files-found: error
+          retention-days: 14

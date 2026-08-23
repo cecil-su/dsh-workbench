@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "dsh": {
+    "release": "dsh-v0.1.1-rc.2",
+    "packageVersion": "0.1.1-rc.2"
+  },
+  "electron": {
+    "version": "43.4.1",
+    "builderVersion": "26.15.3"
+  },
+  "firstPartyPlugins": [
+    {
+      "entryId": "dsh-workbench-desktop-core",
+      "packageName": "@dsh-workbench/desktop-core"
+    },
+    {
+      "entryId": "dsh-workbench-oauth-ui",
+      "packageName": "@dsh-workbench/oauth-ui"
+    },
+    {
+      "entryId": "dsh-workbench-diagnostics-ui",
+      "packageName": "@dsh-workbench/diagnostics-ui"
+    }
+  ]
+}

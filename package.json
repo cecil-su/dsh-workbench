@@ -9,13 +9,21 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "check": "pnpm typecheck && pnpm test",
-    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop dev",
-    "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm -r --if-present typecheck"
+    "check": "pnpm verify:compatibility && pnpm typecheck && pnpm test",
+    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm --filter @dsh-workbench/desktop dev",
+    "package:artifacts": "pnpm build && node scripts/package.mjs --artifacts",
+    "package:dir": "pnpm build && node scripts/package.mjs --dir",
+    "test": "pnpm test:scripts && pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @dsh-workbench/desktop test:integration",
+    "test:package": "node scripts/package-smoke.mjs",
+    "test:scripts": "node --test scripts/package-provenance.test.mjs scripts/verify-compatibility.test.mjs scripts/verify-release-matrix.test.mjs",
+    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm -r --if-present typecheck",
+    "verify:compatibility": "node scripts/verify-compatibility.mjs",
+    "verify:release-matrix": "node scripts/verify-release-matrix.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
+    "electron-builder": "26.15.3",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   }

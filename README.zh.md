@@ -10,6 +10,8 @@ DSH Workbench 保持上游 Harness 可替换：Electron 只负责桌面生命周
 
 > 当前状态：早期工程骨架。DeepSeek Harness 仍处于开发者预览阶段，可能包含破坏性变更。
 
+长期定位、产品支柱和路线阶段见[产品方向](docs/product-direction.md)。
+
 ## 架构
 
 ```text
@@ -22,7 +24,8 @@ Electron 桌面宿主
         |
         `-- 产品插件
                 +-- desktop-core
-                `-- oauth-ui（规划中）
+                +-- oauth-ui
+                `-- diagnostics-ui
 ```
 
 本项目不 fork、不直接修改 DSH Core。任何不得不使用的上游临时补丁，都必须在
@@ -42,9 +45,30 @@ pnpm check
 pnpm dev
 ```
 
-`pnpm dev` 会构建本地包、启动不打开外部浏览器的 DSH Web Host，等待
-`http://127.0.0.1:3080` 就绪，然后在开启沙箱的 Electron 窗口中加载页面。
-DSH 用户数据独立保存在 Electron 应用的 `userData` 目录中。
+`pnpm dev` 会构建本地包、让 DSH Web Host 使用操作系统分配的本机端口，验证完整
+Web UI 后再在开启沙箱的 Electron 窗口中加载页面。DSH 用户数据独立保存在
+Electron 应用的 `userData` 目录中。桌面宿主还会加载 Workbench 自己的
+`desktop-core` overlay，但不会修改用户的 DSH profile。
+
+Settings > Profiles 页面可以创建和切换彼此隔离的 DSH Home、工作目录与持久化浏览器
+分区。迁移、恢复以及凭据归属边界见 [Workbench Profiles](docs/profiles.md)。
+
+Settings > Sign-in & authorization 会把服务商登录及本地退出登录交给锁定版 DSH
+的官方服务处理；Workbench 不持有也不返回凭据值。详见
+[授权边界](docs/authorization.md)。
+
+Settings > Plugins > Workbench 诊断会把 DSH 官方插件清单与固定的第一方兼容性检查、
+有界且脱敏的运行日志合并展示。修复操作仅可清空当前日志、重启当前 DSH，或重建
+Workbench 自有 overlay 与包链接后再重启。详见[诊断与修复](docs/diagnostics.md)。
+
+运行 `pnpm test:integration` 可以验证真实 DSH 进程、动态端口、Workbench overlay、
+Web 载荷和 IPC 优雅关闭。
+
+运行 `pnpm package:dir && pnpm test:package` 可构建自包含应用，并把完整应用复制到
+工作区之外、使用隔离状态执行验收。`pnpm package:artifacts` 会生成当前平台的未签名
+CI 分发格式与校验和。产物矩阵、冒烟保证和签名边界见[打包与发布验收](docs/packaging.md)。
+发布工作流会把同一干净版本在 Linux、macOS 与 Windows 上的完整证据聚合为一份
+资格报告，规则见[发布资格](docs/release-qualification.md)。
 
 ## 目录
 
@@ -52,7 +76,8 @@ DSH 用户数据独立保存在 Electron 应用的 `userData` 目录中。
 apps/desktop/          Electron 主进程与 preload
 packages/runtime/      DSH 子进程生命周期与就绪检测
 plugins/desktop-core/  第一方 Cordis 插件入口
-plugins/oauth-ui/      规划中的 ChatGPT/Codex 授权界面
+plugins/oauth-ui/      DSH 官方授权控制界面
+plugins/diagnostics-ui/ 第一方兼容性与运行诊断界面
 docs/                  架构和维护决策
 patches/               仅允许临时的上游兼容补丁
 upstream/              上游精确版本记录

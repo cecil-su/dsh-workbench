@@ -2,14 +2,25 @@
   "name": "@dsh-workbench/desktop",
   "version": "0.1.0",
   "private": true,
+  "author": "DSH Workbench contributors",
+  "description": "A secure desktop companion for DeepSeek Harness",
+  "productName": "DSH Workbench",
   "type": "module",
   "main": "lib/main.js",
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build && electron .",
+    "test": "pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && vitest run --config vitest.config.ts",
+    "test:integration": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dsh-workbench/desktop-core": "workspace:*",
+    "@dsh-workbench/diagnostics-ui": "workspace:*",
+    "@dsh-workbench/oauth-ui": "workspace:*",
     "@dsh-workbench/runtime": "workspace:*"
   },
   "devDependencies": {

@@ -25,3 +25,62 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:integration
+
+  package-smoke:
+    needs: [check, integration]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            os: ubuntu-24.04
+            arch: x64
+          - id: macos-arm64
+            os: macos-15
+            arch: arm64
+          - id: windows-x64
+            os: windows-2022
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      DSH_WORKBENCH_EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes xvfb
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:dir
+      - run: pnpm test:package
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-smoke-${{ matrix.id }}
+          path: dist/smoke/package-smoke-*.json
+          if-no-files-found: warn
+          retention-days: 7

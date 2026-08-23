@@ -12,6 +12,9 @@ plugins, and upstream packages are pinned to exact versions.
 > Status: early scaffold. DeepSeek Harness is a developer preview and may ship
 > compatibility-breaking changes.
 
+See [Product direction](docs/product-direction.md) for the long-term scope,
+product pillars, and roadmap horizons.
+
 ## Architecture
 
 ```text
@@ -24,7 +27,8 @@ Electron desktop host
         |
         `-- product plugins
                 +-- desktop-core
-                `-- oauth-ui (planned)
+                +-- oauth-ui
+                `-- diagnostics-ui
 ```
 
 The project does not fork or modify DSH Core. Any temporary upstream patch must
@@ -45,10 +49,37 @@ pnpm check
 pnpm dev
 ```
 
-`pnpm dev` builds the local packages, starts the DSH Web host without opening an
-external browser, waits for `http://127.0.0.1:3080`, and loads it inside a
-sandboxed Electron window. DSH user data is isolated under Electron's
-application `userData` directory.
+`pnpm dev` builds the local packages, starts the DSH Web host on an OS-assigned
+loopback port, verifies the complete Web UI, and loads it inside a sandboxed
+Electron window. DSH user data is isolated under Electron's application
+`userData` directory. The desktop host also applies the Workbench-owned
+`desktop-core` overlay without modifying the user's DSH profile.
+
+The Settings > Profiles surface creates and switches isolated DSH homes,
+workspaces, and persistent browser partitions. See
+[Workbench profiles](docs/profiles.md) for migration, recovery, and credential
+ownership details.
+
+Settings > Sign-in & authorization delegates provider login and local sign-out
+to the official services in the pinned DSH release. Workbench never owns or
+returns credential values. See [Authorization](docs/authorization.md).
+
+Settings > Plugins > Workbench diagnostics combines the official DSH plugin
+inventory with a fixed first-party compatibility projection and bounded,
+redacted runtime logs. Its repair actions can clear the active log, restart the
+active DSH runtime, or recreate only the Workbench-owned overlay and package
+links before restarting. See [Diagnostics and repair](docs/diagnostics.md).
+
+Run `pnpm test:integration` to exercise the real DSH process, dynamic port,
+Workbench overlay, Web payload, and graceful IPC shutdown.
+
+Run `pnpm package:dir && pnpm test:package` to build a self-contained application
+and exercise a copy outside the checkout with isolated state. Use
+`pnpm package:artifacts` for the current platform's unsigned CI distribution
+formats and checksums. See [Packaging and release acceptance](docs/packaging.md)
+for the artifact matrix, smoke guarantees, and signing boundary. The release
+workflow qualifies one clean, matching Linux/macOS/Windows evidence matrix as
+described in [Release qualification](docs/release-qualification.md).
 
 ## Repository layout
 
@@ -56,7 +87,8 @@ application `userData` directory.
 apps/desktop/          Electron main and preload processes
 packages/runtime/      DSH child-process lifecycle and readiness checks
 plugins/desktop-core/  First-party Cordis plugin entrypoint
-plugins/oauth-ui/      Planned ChatGPT/Codex authorization UI
+plugins/oauth-ui/      Official DSH authorization controls
+plugins/diagnostics-ui/ First-party compatibility and runtime diagnostics
 docs/                  Architecture and maintenance decisions
 patches/               Exceptional, temporary upstream patches only
 upstream/              Exact upstream version metadata

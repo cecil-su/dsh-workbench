@@ -525,8 +525,16 @@ function verifyDirectoryPickerPatch({
   )
   record(
     issues,
+    /^\+\s*return koffi\.decode\.string16\(address\);$/mu.test(patchSource)
+      && !/^\+.*koffi\.view\(/mu.test(patchSource)
+      && /^\+\s*\}\s*finally\s*\{$[\s\S]*?^\+\s*coTaskMemFree\(name\);$/mu.test(patchSource),
+    'directory-picker patch must decode UTF-16 without Electron external buffers and free COM memory',
+  )
+  record(
+    issues,
     patchDocumentation.includes(`\`${patchKey}\``)
       && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/8')
+      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/10')
       && patchDocumentation.includes('Owner:')
       && patchDocumentation.includes('Introduced: 2026-08-23')
       && patchDocumentation.includes('Removal condition:')
@@ -539,8 +547,10 @@ function verifyDirectoryPickerPatch({
       && testSource.includes('createWin32DialogPost')
       && testSource.includes("kind: 'showing'")
       && testSource.includes("kind: 'done'")
-      && testSource.includes("kind: 'error'"),
-    'directory-picker patch regression test must run and cover showing, done, and error messages',
+      && testSource.includes("kind: 'error'")
+      && testSource.includes('koffi\\.decode\\.string16')
+      && testSource.includes('koffi\\.view'),
+    'directory-picker patch regression test must cover IPC outcomes and the Electron-safe decoder',
   )
   for (const fileName of ['worker.cjs', 'worker-ipc.cjs']) {
     const stageAssignment = packageVerifierSource.match(new RegExp(

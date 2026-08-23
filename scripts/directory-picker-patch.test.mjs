@@ -123,12 +123,15 @@ describe('patched Win32 directory picker worker IPC', () => {
     ])
   })
 
-  it('loads the helper from the exact patched worker artifact', async () => {
+  it('loads the safe decoder and helper from the exact patched worker artifact', async () => {
     const manifest = JSON.parse(await readFile(nativePickerManifest, 'utf8'))
     const worker = await readFile(workerPath, 'utf8')
 
     assert.equal(manifest.version, '0.1.1-rc.2')
     assert.match(worker, /require\("\.\/worker-ipc\.cjs"\)/u)
+    assert.match(worker, /koffi\.decode\.string16\(address\)/u)
+    assert.match(worker, /finally \{\s*coTaskMemFree\(name\);/u)
+    assert.doesNotMatch(worker, /koffi\.view\(/u)
     assert.doesNotMatch(
       worker,
       /const post = \(message\) => \{[\s\S]*if \(process\.connected\) process\.disconnect\(\);/u,

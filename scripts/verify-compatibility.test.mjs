@@ -159,6 +159,18 @@ describe('compatibility verifier', () => {
     await expectFailure(root, /must keep showing non-terminal and flush terminal outcomes/u)
   })
 
+  it('rejects a directory-picker patch that uses Electron external buffers', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch',
+      '+\treturn koffi.decode.string16(address);',
+      '+\treturn Buffer.from(koffi.view(address, 32768)).toString("utf16le");',
+    )
+
+    await expectFailure(root, /must decode UTF-16 without Electron external buffers and free COM memory/u)
+  })
+
   it('rejects omission of the patched helper from stage verification', async () => {
     const root = await createFixture()
     await replaceExactlyOnce(
@@ -185,8 +197,8 @@ describe('compatibility verifier', () => {
     await replaceExactlyOnce(
       root,
       'pnpm-lock.yaml',
-      'version: 0.1.1-rc.2(50dbf59eae56ca52d38989576c616eb8)',
-      'version: 0.1.1-rc.1(50dbf59eae56ca52d38989576c616eb8)',
+      'version: 0.1.1-rc.2(9344e849add969babd52d6b5331335e0)',
+      'version: 0.1.1-rc.1(9344e849add969babd52d6b5331335e0)',
     )
 
     await expectFailure(root, /importer packages\/runtime must resolve @deepseek-ai\/dsh/u)

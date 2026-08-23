@@ -1,8 +1,45 @@
 diff --git a/lib/worker.cjs b/lib/worker.cjs
-index 14f4584c748bbec5a1a0282afe486c098668dfe6..ad30e3b461fc1190bcffcab72e9ec2fb8c2cf006 100644
+index 14f4584c748bbec5a1a0282afe486c098668dfe6..a744a61b5b8b7bd071efb647537e5b7f680229a4 100644
 --- a/lib/worker.cjs
 +++ b/lib/worker.cjs
-@@ -204,12 +204,12 @@ const title = process.env.DSH_DIALOG_TITLE ?? "";
+@@ -13,16 +13,12 @@
+ * object's first pointer.
+ */
+ /**
+-* Read a NUL-terminated UTF-16 string at a native address. koffi's
+-* `_Out_ void **` out-params surface a raw address, and
+-* `koffi.decode(addr, 'str16')` would dereference it as a pointer — crash
+-* on real Windows — so view the memory directly instead.
++* Read a NUL-terminated UTF-16 string at a native address without creating an
++* external ArrayBuffer, which Electron forbids. The specialized decoder treats
++* `address` as the string data rather than dereferencing it as a pointer value.
+ */
+ function readUtf16(koffi, address) {
+-	const bytes = Buffer.from(koffi.view(address, 32768));
+-	let end = 0;
+-	while (end + 1 < bytes.length && bytes[end] !== 0) end += 2;
+-	return bytes.toString("utf16le", 0, end);
++	return koffi.decode.string16(address);
+ }
+ const COINIT_APARTMENTTHREADED = 2;
+ const CLSCTX_INPROC_SERVER = 1;
+@@ -132,6 +128,9 @@
+-						const path = readUtf16(koffi, nameOut[0]);
+-						coTaskMemFree(nameOut[0]);
+-						return {
+-							hr: gotName,
+-							path
+-						};
++						const name = nameOut[0];
++						try {
++							return {
++								hr: gotName,
++								path: readUtf16(koffi, name)
++							};
++						} finally {
++							coTaskMemFree(name);
++						}
+@@ -204,12 +203,12 @@ const title = process.env.DSH_DIALOG_TITLE ?? "";
  if (title === "") throw new Error("win32-dialog-worker: DSH_DIALOG_TITLE is required");
  if (process.send === void 0) throw new Error("win32-dialog-worker must run as a child process with an IPC channel");
  const send = process.send.bind(process);

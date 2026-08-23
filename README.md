@@ -54,6 +54,11 @@ Electron window. DSH user data is isolated under Electron's application
 `userData` directory. The desktop host also applies the Workbench-owned
 `desktop-core` overlay without modifying the user's DSH profile.
 
+The Settings > Profiles surface creates and switches isolated DSH homes,
+workspaces, and persistent browser partitions. See
+[Workbench profiles](docs/profiles.md) for migration, recovery, and credential
+ownership details.
+
 Run `pnpm test:integration` to exercise the real DSH process, dynamic port,
 Workbench overlay, Web payload, and graceful IPC shutdown.
 

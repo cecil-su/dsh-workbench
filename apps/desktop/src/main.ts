@@ -1,24 +1,37 @@
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-
 import { app, BrowserWindow, dialog } from 'electron'
 import {
   DshRuntime,
   DshRuntimeError,
-  type DshRuntimeExit,
-  type DshRuntimeReady,
 } from '@dsh-workbench/runtime'
 
 import { prepareDesktopCoreContribution } from './contribution.js'
 import { runPackageSmoke } from './package-smoke.js'
+import { buildProfileEnvironment } from './profile-environment.js'
+import { prepareProfileModuleFallback } from './profile-modules.js'
+import {
+  ProfileRuntimeController,
+  type ProfileRuntimeSession,
+  type UnexpectedProfileRuntimeExit,
+} from './profile-runtime.js'
+import { ProfileStore } from './profile-store.js'
+import {
+  installProfileIpc,
+  ProfileTransitionCoordinator,
+  sendProfileContext,
+} from './profiles-ipc.js'
 import { parsePackageSmokeOptions } from './smoke-options.js'
-import { createWorkbenchBrowserWindow } from './window.js'
+import {
+  createWorkbenchBrowserWindow,
+  profileSessionPartition,
+} from './window.js'
 
 let mainWindow: BrowserWindow | undefined
 let quitting = false
 let recoveryPromise: Promise<void> | undefined
-let runtime: DshRuntime | undefined
-let runtimeInitialization: Promise<DshRuntime> | undefined
+let runtimeController: ProfileRuntimeController | undefined
+let profileTransitions: ProfileTransitionCoordinator | undefined
+let profileTransitionInitialization: Promise<ProfileTransitionCoordinator> | undefined
+let uninstallProfileIpc: (() => void) | undefined
 let windowOpenPromise: Promise<void> | undefined
 let windowReplacementInProgress = false
 
@@ -56,10 +69,10 @@ async function promptForRetry(message: string, error: unknown): Promise<boolean>
   return result.response === 0
 }
 
-function scheduleUnexpectedRuntimeExit(event: DshRuntimeExit): void {
-  if (event.expected || quitting || recoveryPromise) return
+function scheduleUnexpectedRuntimeExit(exit: UnexpectedProfileRuntimeExit): void {
+  if (exit.event.expected || quitting || recoveryPromise) return
 
-  const operation = recoverFromUnexpectedRuntimeExit(event)
+  const operation = recoverFromUnexpectedRuntimeExit(exit)
   recoveryPromise = operation
   void operation.then(
     () => {
@@ -72,55 +85,93 @@ function scheduleUnexpectedRuntimeExit(event: DshRuntimeExit): void {
   )
 }
 
-async function getRuntime(): Promise<DshRuntime> {
-  if (runtime) return runtime
-  if (runtimeInitialization) return runtimeInitialization
+async function getProfileTransitions(): Promise<ProfileTransitionCoordinator> {
+  if (profileTransitions) return profileTransitions
+  if (profileTransitionInitialization) return profileTransitionInitialization
 
   const operation = (async () => {
     const userDataPath = app.getPath('userData')
-    const workspacePath = join(userDataPath, 'workspace')
-    await mkdir(workspacePath, { mode: 0o700, recursive: true })
+    const profiles = new ProfileStore(userDataPath)
+    await profiles.initialize()
     const desktopCore = await prepareDesktopCoreContribution(userDataPath)
-    const instance = new DshRuntime({
-      cwd: workspacePath,
-      env: {
-        ...process.env,
-        DSH_HOME: join(userDataPath, 'dsh'),
+    const controller = new ProfileRuntimeController(
+      profiles,
+      (active, onExit) => {
+        prepareProfileModuleFallback(active.paths.dshHome)
+        return new DshRuntime({
+          cwd: active.paths.workspace,
+          env: buildProfileEnvironment(process.env, active.paths.dshHome),
+          onExit,
+          patchFiles: [desktopCore.patch],
+        })
       },
-      onExit: scheduleUnexpectedRuntimeExit,
-      patchFiles: [desktopCore.patch],
+      scheduleUnexpectedRuntimeExit,
+    )
+    const transitions = new ProfileTransitionCoordinator(controller, activateBrowserWindow)
+    const uninstall = installProfileIpc({
+      confirmArchive: async (profile) => {
+        const window = mainWindow
+        const options = {
+          type: 'warning' as const,
+          title: 'Archive profile',
+          message: `Archive “${profile.name}”?`,
+          detail: 'The profile can be restored later. Its DSH data will not be deleted.',
+          buttons: ['Archive', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        }
+        const result = window && !window.isDestroyed()
+          ? await dialog.showMessageBox(window, options)
+          : await dialog.showMessageBox(options)
+        return result.response === 0
+      },
+      controller,
+      getWindow: () => mainWindow,
+      selectProfile: (profileId) => transitions.select(profileId),
+      store: profiles,
     })
-    runtime = instance
-    return instance
+    runtimeController = controller
+    profileTransitions = transitions
+    uninstallProfileIpc = uninstall
+    return transitions
   })()
 
-  runtimeInitialization = operation
+  profileTransitionInitialization = operation
   void operation.then(
     () => {
-      if (runtimeInitialization === operation) runtimeInitialization = undefined
+      if (profileTransitionInitialization === operation) profileTransitionInitialization = undefined
     },
     () => {
-      if (runtimeInitialization === operation) runtimeInitialization = undefined
+      if (profileTransitionInitialization === operation) profileTransitionInitialization = undefined
     },
   )
   return operation
 }
 
-async function createBrowserWindow(ready: DshRuntimeReady): Promise<BrowserWindow> {
-  const window = createWorkbenchBrowserWindow(ready)
-
+async function activateBrowserWindow(session: ProfileRuntimeSession): Promise<void> {
+  const previous = mainWindow
+  windowReplacementInProgress = true
+  const window = createWorkbenchBrowserWindow(session.ready, {
+    partition: profileSessionPartition(session.profile.id),
+  })
+  // The renderer may mount a persisted Settings route as soon as dom-ready
+  // fires. Make the replacement authoritative before sending its IPC context.
   mainWindow = window
+
   window.once('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
+  window.webContents.once('dom-ready', () => sendProfileContext(window, session))
   try {
-    await window.loadURL(ready.url)
-    windowReplacementInProgress = false
-    return window
+    await window.loadURL(session.ready.url)
+    if (previous && previous !== window && !previous.isDestroyed()) previous.destroy()
   } catch (error) {
-    windowReplacementInProgress = true
+    if (mainWindow === window) mainWindow = previous
     window.destroy()
     throw error
+  } finally {
+    windowReplacementInProgress = false
   }
 }
 
@@ -130,10 +181,10 @@ function installPackageSmokeLifecycle(
   app.on('window-all-closed', () => {})
   void app.whenReady().then(async () => {
     const exitCode = await runPackageSmoke(options)
-    process.exit(exitCode)
+    app.exit(exitCode)
   }).catch((error: unknown) => {
     console.error('Packaged smoke lifecycle failed:', error)
-    process.exit(1)
+    app.exit(1)
   })
 }
 
@@ -148,14 +199,13 @@ async function performOpenMainWindowWithRecovery(): Promise<void> {
 
   while (!quitting) {
     try {
-      const host = await getRuntime()
-      const ready = await host.start()
-      await createBrowserWindow(ready)
+      const transitions = await getProfileTransitions()
+      await transitions.startActive()
       return
     } catch (error) {
       logRuntimeError('Failed to open DSH Workbench:', error)
       try {
-        await runtime?.stop()
+        await (profileTransitions?.stop() ?? runtimeController?.stop())
       } catch (stopError) {
         logRuntimeError('Failed to clean up DSH after startup:', stopError)
         await handleFatalError(stopError)
@@ -187,27 +237,22 @@ function openMainWindowWithRecovery(): Promise<void> {
   return operation
 }
 
-async function recoverFromUnexpectedRuntimeExit(event: DshRuntimeExit): Promise<void> {
+async function recoverFromUnexpectedRuntimeExit(exit: UnexpectedProfileRuntimeExit): Promise<void> {
+  const { event, session } = exit
   console.error(
-    'DSH exited unexpectedly (code %s, signal %s).\n%s',
+    'DSH for profile %s exited unexpectedly (code %s, signal %s).\n%s',
+    session.profile.id,
     event.code ?? 'none',
     event.signal ?? 'none',
     event.output,
   )
 
-  const retry = await promptForRetry(
+  const transitions = await getProfileTransitions()
+  const recovered = await transitions.recover(session, () => promptForRetry(
     'DeepSeek Harness stopped unexpectedly.',
     new Error(`Exit code ${event.code ?? 'none'}, signal ${event.signal ?? 'none'}`),
-  )
-  if (!retry) {
-    app.quit()
-    return
-  }
-
-  const window = mainWindow
-  windowReplacementInProgress = true
-  if (window && !window.isDestroyed()) window.destroy()
-  await openMainWindowWithRecovery()
+  ))
+  if (!recovered && !quitting) app.quit()
 }
 
 async function handleFatalError(error: unknown): Promise<void> {
@@ -216,11 +261,13 @@ async function handleFatalError(error: unknown): Promise<void> {
   logRuntimeError('Fatal DSH Workbench error:', error)
 
   try {
-    await runtime?.stop()
+    await (profileTransitions?.shutdown() ?? runtimeController?.stop())
   } catch (stopError) {
     logRuntimeError('Failed to stop DSH during fatal shutdown:', stopError)
   }
 
+  uninstallProfileIpc?.()
+  uninstallProfileIpc = undefined
   dialog.showErrorBox('DSH Workbench', describeError(error))
   app.exit(1)
 }
@@ -256,7 +303,9 @@ function installApplicationLifecycle(): void {
 
     event.preventDefault()
     quitting = true
-    void (runtime?.stop() ?? Promise.resolve()).catch((error: unknown) => {
+    uninstallProfileIpc?.()
+    uninstallProfileIpc = undefined
+    void (profileTransitions?.shutdown() ?? runtimeController?.stop() ?? Promise.resolve()).catch((error: unknown) => {
       logRuntimeError('Failed to stop DSH during application shutdown:', error)
     }).finally(() => app.quit())
   })
@@ -266,7 +315,12 @@ let packageSmokeOptions: ReturnType<typeof parsePackageSmokeOptions> = undefined
 let packageSmokeArgumentError = false
 try {
   packageSmokeOptions = parsePackageSmokeOptions(process.argv)
-  if (packageSmokeOptions) app.setPath('userData', packageSmokeOptions.userDataPath)
+  if (packageSmokeOptions) {
+    app.setPath('userData', packageSmokeOptions.userDataPath)
+    // Copied unsigned macOS test bundles must not block on a user Keychain
+    // consent prompt while exercising persistent profile partitions.
+    if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain')
+  }
 } catch (error) {
   console.error('Invalid package smoke arguments:', error)
   packageSmokeArgumentError = true

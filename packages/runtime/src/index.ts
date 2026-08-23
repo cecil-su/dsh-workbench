@@ -1,6 +1,11 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import {
+  execFileSync,
+  spawn,
+  spawnSync,
+  type ChildProcess,
+} from 'node:child_process'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 const require = createRequire(import.meta.url)
 
@@ -18,12 +23,27 @@ const UNSAFE_DSH_ENVIRONMENT_KEYS = new Set([
   'NODE_PATH',
 ])
 
+export interface DshRuntimeProcessTableEntry {
+  readonly pgid: number
+  readonly pid: number
+  readonly ppid: number
+}
+
 export type DshRuntimeState = 'idle' | 'starting' | 'running' | 'stopping' | 'failed'
 export type DshRuntimeErrorStage = 'spawn' | 'startup' | 'readiness' | 'shutdown'
 
 export interface DshRuntimeReady {
   pid: number
+  profileEvidence?: DshRuntimeProfileEvidence
   url: string
+}
+
+export interface DshRuntimeProfileEvidence {
+  readonly ambientCredentialConfigured: boolean
+  readonly credentialRecordCount: number
+  readonly credentialRecordFingerprint: string
+  readonly cwd: string
+  readonly dshHome: string
 }
 
 export interface DshRuntimeExit {
@@ -41,12 +61,15 @@ export interface DshRuntimeOptions {
   onExit?: (event: DshRuntimeExit) => void
   patchFiles?: readonly string[]
   port?: number
+  /** Test seam for deterministic process-tree cleanup coverage. */
+  processTable?: () => readonly DshRuntimeProcessTableEntry[]
   readinessProbe?: (url: string, signal: AbortSignal) => Promise<void>
   shutdownTimeoutMs?: number
   startupTimeoutMs?: number
 }
 
 interface DesktopReadyMessage {
+  profileEvidence?: DshRuntimeProfileEvidence
   protocolVersion: 1
   type: typeof READY_MESSAGE_TYPE
   url: string
@@ -153,6 +176,9 @@ export function parseDesktopReadyMessage(message: unknown): DesktopReadyMessage 
     return undefined
   }
 
+  const profileEvidence = parseProfileEvidence(candidate.profileEvidence)
+  if ('profileEvidence' in candidate && !profileEvidence) return undefined
+
   try {
     const url = new URL(candidate.url)
     const port = Number(url.port)
@@ -172,6 +198,7 @@ export function parseDesktopReadyMessage(message: unknown): DesktopReadyMessage 
     }
 
     return {
+      ...(profileEvidence === undefined ? {} : { profileEvidence }),
       protocolVersion: DESKTOP_PROTOCOL_VERSION,
       type: READY_MESSAGE_TYPE,
       url: url.origin,
@@ -179,6 +206,33 @@ export function parseDesktopReadyMessage(message: unknown): DesktopReadyMessage 
   } catch {
     return undefined
   }
+}
+
+function parseProfileEvidence(value: unknown): DshRuntimeProfileEvidence | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const candidate = value as Record<string, unknown>
+  if (
+    Object.keys(candidate).length !== 5
+    || typeof candidate.ambientCredentialConfigured !== 'boolean'
+    || !Number.isSafeInteger(candidate.credentialRecordCount)
+    || (candidate.credentialRecordCount as number) < 0
+    || typeof candidate.credentialRecordFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(candidate.credentialRecordFingerprint)
+    || typeof candidate.cwd !== 'string'
+    || !isAbsolute(candidate.cwd)
+    || typeof candidate.dshHome !== 'string'
+    || !isAbsolute(candidate.dshHome)
+  ) {
+    return undefined
+  }
+  return Object.freeze({
+    ambientCredentialConfigured: candidate.ambientCredentialConfigured,
+    credentialRecordCount: candidate.credentialRecordCount as number,
+    credentialRecordFingerprint: candidate.credentialRecordFingerprint,
+    cwd: candidate.cwd,
+    dshHome: candidate.dshHome,
+  })
 }
 
 export function resolveDshBin(): string {
@@ -229,6 +283,165 @@ function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: strin
   })
 }
 
+function readPosixProcessTable(): DshRuntimeProcessTableEntry[] {
+  const output = execFileSync('ps', ['-axo', 'pid=,ppid=,pgid='], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  return output.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/u.exec(line)
+    if (!match) return []
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]) }]
+  })
+}
+
+function readWindowsProcessTable(): DshRuntimeProcessTableEntry[] {
+  const output = execFileSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+  ], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  return output.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line)
+    if (!match) return []
+    const pid = Number(match[1])
+    return [{ pgid: pid, pid, ppid: Number(match[2]) }]
+  })
+}
+
+function readProcessTable(): DshRuntimeProcessTableEntry[] {
+  return process.platform === 'win32'
+    ? readWindowsProcessTable()
+    : readPosixProcessTable()
+}
+
+function processTargetsForTree(
+  rootPid: number,
+  entries: readonly DshRuntimeProcessTableEntry[],
+): { groups: number[]; pids: number[] } {
+  const byParent = new Map<number, DshRuntimeProcessTableEntry[]>()
+  for (const entry of entries) {
+    const children = byParent.get(entry.ppid) ?? []
+    children.push(entry)
+    byParent.set(entry.ppid, children)
+  }
+  const pending = [rootPid]
+  const descendants = new Set([rootPid])
+  while (pending.length > 0) {
+    const parent = pending.shift()
+    if (parent === undefined) break
+    for (const child of byParent.get(parent) ?? []) {
+      if (descendants.has(child.pid)) continue
+      descendants.add(child.pid)
+      pending.push(child.pid)
+    }
+  }
+
+  const ownGroup = entries.find((entry) => entry.pid === process.pid)?.pgid
+  const groups = new Set<number>()
+  const pids = new Set<number>()
+  for (const entry of entries) {
+    if (!descendants.has(entry.pid) || entry.pid === rootPid) continue
+    if (process.platform === 'win32') pids.add(entry.pid)
+    else if (entry.pgid > 0 && entry.pgid !== ownGroup) groups.add(entry.pgid)
+    else pids.add(entry.pid)
+  }
+  return { groups: [...groups].sort((left, right) => left - right), pids: [...pids] }
+}
+
+function snapshotProcessTargets(
+  rootPid: number,
+  readProcessTable: () => readonly DshRuntimeProcessTableEntry[],
+): { groups: number[]; pids: number[] } {
+  try {
+    return processTargetsForTree(rootPid, readProcessTable())
+  } catch {
+    return { groups: [], pids: [] }
+  }
+}
+
+function signalProcessTargets(
+  targets: { groups: readonly number[]; pids: readonly number[] },
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform === 'win32') {
+    for (const descendantPid of targets.pids) {
+      spawnSync('taskkill.exe', ['/pid', String(descendantPid), '/t', '/f'], { stdio: 'ignore' })
+    }
+    return
+  }
+  for (const group of targets.groups) {
+    try {
+      process.kill(-group, signal)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+  }
+  for (const descendantPid of targets.pids) {
+    try {
+      process.kill(descendantPid, signal)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+  }
+}
+
+function processTargetsAreAlive(
+  targets: { groups: readonly number[]; pids: readonly number[] },
+): boolean {
+  const probes = [
+    ...targets.groups.map((group) => -group),
+    ...targets.pids,
+  ]
+  return probes.some((pid) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM'
+    }
+  })
+}
+
+async function terminateSnapshotTargets(
+  targets: { groups: readonly number[]; pids: readonly number[] },
+): Promise<boolean> {
+  if (targets.groups.length === 0 && targets.pids.length === 0) return true
+  signalProcessTargets(targets, 'SIGKILL')
+  const deadline = Date.now() + FORCE_KILL_TIMEOUT_MS
+  while (processTargetsAreAlive(targets) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return !processTargetsAreAlive(targets)
+}
+
+async function signalProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+  readProcessTable: () => readonly DshRuntimeProcessTableEntry[],
+): Promise<void> {
+  const pid = child.pid
+  if (pid === undefined || pid <= 0) return
+  if (process.platform === 'win32') {
+    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { stdio: 'ignore' })
+    return
+  }
+
+  const targets = snapshotProcessTargets(pid, readProcessTable)
+  signalProcessTargets(targets, signal)
+  if (targets.groups.length > 0 || targets.pids.length > 0) {
+    // Give the still-live DSH parent one event-loop turn to reap terminated
+    // descendants before the root itself is signalled.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  child.kill(signal)
+}
+
 export class DshRuntime {
   readonly #cwd: string
   readonly #dshBin: string
@@ -237,6 +450,7 @@ export class DshRuntime {
   readonly #onExit: ((event: DshRuntimeExit) => void) | undefined
   readonly #patchFiles: readonly string[]
   readonly #port: number
+  readonly #readProcessTable: () => readonly DshRuntimeProcessTableEntry[]
   readonly #readinessProbe: (url: string, signal: AbortSignal) => Promise<void>
   readonly #shutdownTimeoutMs: number
   readonly #startupTimeoutMs: number
@@ -259,6 +473,7 @@ export class DshRuntime {
     this.#onExit = options.onExit
     this.#patchFiles = [...options.patchFiles ?? []]
     this.#port = port
+    this.#readProcessTable = options.processTable ?? readProcessTable
     this.#readinessProbe = options.readinessProbe ?? defaultReadinessProbe
     this.#shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
     this.#startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS
@@ -423,7 +638,11 @@ export class DshRuntime {
         throw new Error('DSH stopped while startup was completing')
       }
 
-      const ready = Object.freeze({ pid: child.pid, url: message.url })
+      const ready = Object.freeze({
+        pid: child.pid,
+        ...(message.profileEvidence === undefined ? {} : { profileEvidence: message.profileEvidence }),
+        url: message.url,
+      })
       this.#ready = ready
       this.#state = 'running'
       return ready
@@ -483,14 +702,21 @@ export class DshRuntime {
     closePromise: Promise<void>,
     requestGracefulShutdown: boolean,
   ): Promise<boolean> {
+    const gracefulTargets = requestGracefulShutdown && child.pid
+      ? snapshotProcessTargets(child.pid, this.#readProcessTable)
+      : undefined
     if (child.exitCode === null && child.signalCode === null) {
       if (requestGracefulShutdown && child.connected) this.#sendShutdownMessage(child)
-      else child.kill('SIGTERM')
+      else await signalProcessTree(child, 'SIGTERM', this.#readProcessTable)
     }
-    if (await waitForClose(closePromise, this.#shutdownTimeoutMs)) return true
+    if (await waitForClose(closePromise, this.#shutdownTimeoutMs)) {
+      return gracefulTargets ? terminateSnapshotTargets(gracefulTargets) : true
+    }
 
-    child.kill('SIGKILL')
-    if (await waitForClose(closePromise, FORCE_KILL_TIMEOUT_MS)) return true
+    await signalProcessTree(child, 'SIGKILL', this.#readProcessTable)
+    if (await waitForClose(closePromise, FORCE_KILL_TIMEOUT_MS)) {
+      return gracefulTargets ? terminateSnapshotTargets(gracefulTargets) : true
+    }
 
     this.#state = 'failed'
     return false
@@ -501,16 +727,31 @@ export class DshRuntime {
     closePromise: Promise<void>,
     requestGracefulShutdown: boolean,
   ): Promise<void> {
+    const gracefulTargets = requestGracefulShutdown && child.pid
+      ? snapshotProcessTargets(child.pid, this.#readProcessTable)
+      : undefined
     if (child.exitCode === null && child.signalCode === null && requestGracefulShutdown && child.connected) {
       this.#sendShutdownMessage(child)
     } else if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
+      await signalProcessTree(child, 'SIGTERM', this.#readProcessTable)
     }
 
-    if (await waitForClose(closePromise, this.#shutdownTimeoutMs)) return
+    if (await waitForClose(closePromise, this.#shutdownTimeoutMs)) {
+      if (gracefulTargets && !(await terminateSnapshotTargets(gracefulTargets))) {
+        this.#state = 'failed'
+        throw new DshRuntimeError('shutdown', 'DSH descendants survived graceful root shutdown')
+      }
+      return
+    }
 
-    child.kill('SIGKILL')
-    if (await waitForClose(closePromise, FORCE_KILL_TIMEOUT_MS)) return
+    await signalProcessTree(child, 'SIGKILL', this.#readProcessTable)
+    if (await waitForClose(closePromise, FORCE_KILL_TIMEOUT_MS)) {
+      if (gracefulTargets && !(await terminateSnapshotTargets(gracefulTargets))) {
+        this.#state = 'failed'
+        throw new DshRuntimeError('shutdown', 'DSH descendants survived forced root shutdown')
+      }
+      return
+    }
 
     this.#state = 'failed'
     throw new DshRuntimeError('shutdown', 'DSH did not exit after forced termination')
@@ -523,10 +764,18 @@ export class DshRuntime {
         type: SHUTDOWN_MESSAGE_TYPE,
       }, (error) => {
         if (!error || child.exitCode !== null || child.signalCode !== null) return
-        child.kill('SIGTERM')
+        void signalProcessTree(child, 'SIGTERM', this.#readProcessTable).catch(() => {
+          try {
+            child.kill('SIGTERM')
+          } catch {}
+        })
       })
     } catch {
-      child.kill('SIGTERM')
+      void signalProcessTree(child, 'SIGTERM', this.#readProcessTable).catch(() => {
+        try {
+          child.kill('SIGTERM')
+        } catch {}
+      })
     }
   }
 

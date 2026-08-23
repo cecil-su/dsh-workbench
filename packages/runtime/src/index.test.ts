@@ -1,4 +1,7 @@
 import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +41,15 @@ function fakeRuntime(
   })
   runtimes.push(runtime)
   return runtime
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 describe('DSH runtime', () => {
@@ -91,11 +103,20 @@ describe('DSH runtime', () => {
   })
 
   it('accepts only protocol-matched loopback ready messages', () => {
+    const profileEvidence = {
+      ambientCredentialConfigured: false,
+      credentialRecordCount: 1,
+      credentialRecordFingerprint: 'a'.repeat(64),
+      cwd: process.cwd(),
+      dshHome: process.cwd(),
+    }
     expect(parseDesktopReadyMessage({
+      profileEvidence,
       protocolVersion: 1,
       type: 'dsh-workbench/ready',
       url: 'http://127.0.0.1:43123',
     })).toEqual({
+      profileEvidence,
       protocolVersion: 1,
       type: 'dsh-workbench/ready',
       url: 'http://127.0.0.1:43123',
@@ -115,6 +136,12 @@ describe('DSH runtime', () => {
       protocolVersion: 1,
       type: 'dsh-workbench/ready',
       url: 'https://127.0.0.1:43123',
+    })).toBeUndefined()
+    expect(parseDesktopReadyMessage({
+      profileEvidence: { ...profileEvidence, credentialRecordFingerprint: 'not-a-hash' },
+      protocolVersion: 1,
+      type: 'dsh-workbench/ready',
+      url: 'http://127.0.0.1:43123',
     })).toBeUndefined()
   })
 
@@ -138,6 +165,83 @@ describe('DSH runtime', () => {
     await firstStop
     expect(runtime.state).toBe('idle')
     expect(runtime.url).toBeUndefined()
+  })
+
+  it('force-terminates detached descendant trees when graceful shutdown hangs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-workbench-runtime-tree-'))
+    const pidPath = join(root, 'descendant.pid')
+    let descendantPid = 0
+    let runtime: DshRuntime
+    runtime = fakeRuntime('hang-with-descendant', {
+      env: { DSH_WORKBENCH_FAKE_DESCENDANT_PID_PATH: pidPath },
+      processTable: () => {
+        const rootPid = runtime.pid ?? -1
+        return [
+          { pgid: 1, pid: process.pid, ppid: 1 },
+          { pgid: 1, pid: rootPid, ppid: process.pid },
+          { pgid: descendantPid, pid: descendantPid, ppid: rootPid },
+        ]
+      },
+      shutdownTimeoutMs: 50,
+    })
+    try {
+      await runtime.start()
+      await vi.waitFor(async () => {
+        descendantPid = Number(await readFile(pidPath, 'utf8'))
+        expect(descendantPid).toBeGreaterThan(0)
+      })
+      expect(isProcessAlive(descendantPid)).toBe(true)
+
+      await runtime.stop()
+      expect(isProcessAlive(descendantPid)).toBe(false)
+      expect(runtime.state).toBe('idle')
+    } finally {
+      if (descendantPid > 0 && isProcessAlive(descendantPid)) {
+        try {
+          if (process.platform === 'win32') process.kill(descendantPid, 'SIGKILL')
+          else process.kill(-descendantPid, 'SIGKILL')
+        } catch {}
+      }
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('sweeps detached descendants after the DSH root exits gracefully', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-workbench-runtime-graceful-tree-'))
+    const pidPath = join(root, 'descendant.pid')
+    let descendantPid = 0
+    let runtime: DshRuntime
+    runtime = fakeRuntime('graceful-with-descendant', {
+      env: { DSH_WORKBENCH_FAKE_DESCENDANT_PID_PATH: pidPath },
+      processTable: () => {
+        const rootPid = runtime.pid ?? -1
+        return [
+          { pgid: 1, pid: process.pid, ppid: 1 },
+          { pgid: 1, pid: rootPid, ppid: process.pid },
+          { pgid: descendantPid, pid: descendantPid, ppid: rootPid },
+        ]
+      },
+    })
+    try {
+      await runtime.start()
+      await vi.waitFor(async () => {
+        descendantPid = Number(await readFile(pidPath, 'utf8'))
+        expect(descendantPid).toBeGreaterThan(0)
+      })
+      expect(isProcessAlive(descendantPid)).toBe(true)
+
+      await runtime.stop()
+      expect(isProcessAlive(descendantPid)).toBe(false)
+      expect(runtime.state).toBe('idle')
+    } finally {
+      if (descendantPid > 0 && isProcessAlive(descendantPid)) {
+        try {
+          if (process.platform === 'win32') process.kill(descendantPid, 'SIGKILL')
+          else process.kill(-descendantPid, 'SIGKILL')
+        } catch {}
+      }
+      await rm(root, { force: true, recursive: true })
+    }
   })
 
   it('uses IPC shutdown after ready arrives while the HTTP probe is pending', async () => {

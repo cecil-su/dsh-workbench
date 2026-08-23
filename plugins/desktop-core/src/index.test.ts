@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   apply,
   createDesktopHostReadyMessage,
+  fingerprintCredentialRecords,
   isDesktopHostShutdownMessage,
   serviceName,
 } from './index.js'
@@ -28,13 +29,30 @@ describe('desktop-core contribution', () => {
   })
 
   it('creates a versioned loopback ready message', () => {
-    expect(createDesktopHostReadyMessage('127.0.0.1', 43_123)).toEqual({
+    const profileEvidence = {
+      ambientCredentialConfigured: false,
+      credentialRecordCount: 0,
+      credentialRecordFingerprint: '0'.repeat(64),
+      cwd: process.cwd(),
+      dshHome: process.cwd(),
+    }
+    expect(createDesktopHostReadyMessage('127.0.0.1', 43_123, profileEvidence)).toEqual({
+      profileEvidence,
       protocolVersion: 1,
       type: 'dsh-workbench/ready',
       url: 'http://127.0.0.1:43123',
     })
-    expect(() => createDesktopHostReadyMessage('0.0.0.0', 43_123)).toThrow()
-    expect(() => createDesktopHostReadyMessage('127.0.0.1', 0)).toThrow(RangeError)
+    expect(() => createDesktopHostReadyMessage('0.0.0.0', 43_123, profileEvidence)).toThrow()
+    expect(() => createDesktopHostReadyMessage('127.0.0.1', 0, profileEvidence)).toThrow(RangeError)
+  })
+
+  it('fingerprints credential record metadata without reading credential values', () => {
+    const entries = [
+      { key: 'probe/b' as never, kind: 'grant' as const },
+      { key: 'probe/a' as never, kind: 'api-key' as const },
+    ]
+    expect(fingerprintCredentialRecords(entries)).toMatch(/^[a-f0-9]{64}$/u)
+    expect(fingerprintCredentialRecords(entries)).toBe(fingerprintCredentialRecords([...entries].reverse()))
   })
 
   it('accepts only the matching shutdown protocol', () => {

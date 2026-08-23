@@ -49,5 +49,12 @@ the runtime spawns DSH directly and DSH may link its dependency closure into an
 isolated profile. The packaged Electron binary therefore keeps its RunAsNode
 fuse while disabling Node option and inspector injection.
 
-Signing, auto-update, profiles, tray integration, and OAuth UI follow only after
-the lifecycle and cross-platform package acceptance are reliable.
+Profile storage and switching build on that package boundary. The host owns the
+registry, runtime transition, and Electron session partition; DSH continues to
+own settings and credentials under the selected `DSH_HOME`, while the
+`desktop-core` plugin contributes the Profiles settings surface. See
+[Workbench profiles](profiles.md) for the storage, migration, recovery, and
+credential boundaries.
+
+Signing, auto-update, tray integration, and OAuth UI follow only after the
+lifecycle and cross-platform package acceptance are reliable.

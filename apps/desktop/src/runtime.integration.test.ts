@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,9 +7,37 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshRuntime } from '@dsh-workbench/runtime'
 
 import { prepareDesktopCoreContribution } from './contribution.js'
+import { buildProfileEnvironment } from './profile-environment.js'
+import { prepareProfileModuleFallback } from './profile-modules.js'
+import { ProfileRuntimeController } from './profile-runtime.js'
+import { ProfileStore } from './profile-store.js'
 
 const temporaryDirectories: string[] = []
 const runtimes: DshRuntime[] = []
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+function isPortOpen(url: string): Promise<boolean> {
+  const parsed = new URL(url)
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: parsed.hostname, port: Number(parsed.port) })
+    const finish = (open: boolean): void => {
+      socket.destroy()
+      resolve(open)
+    }
+    socket.setTimeout(750)
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+    socket.once('timeout', () => finish(false))
+  })
+}
 
 afterEach(async () => {
   await Promise.allSettled(runtimes.splice(0).map((runtime) => runtime.stop()))
@@ -27,13 +56,12 @@ describe('desktop DSH lifecycle', () => {
     const userDataPath = await mkdtemp(join(tmpdir(), 'dsh-workbench-integration-'))
     temporaryDirectories.push(userDataPath)
     const contribution = await prepareDesktopCoreContribution(userDataPath)
+    const dshHome = join(userDataPath, 'dsh')
+    prepareProfileModuleFallback(dshHome)
     const onExit = vi.fn()
     const runtime = new DshRuntime({
       cwd: userDataPath,
-      env: {
-        ...process.env,
-        DSH_HOME: join(userDataPath, 'dsh'),
-      },
+      env: buildProfileEnvironment(process.env, dshHome),
       onExit,
       patchFiles: [contribution.patch],
     })
@@ -49,7 +77,9 @@ describe('desktop DSH lifecycle', () => {
     const response = await fetch(ready.url)
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('text/html')
-    expect(await response.text()).toContain('__DSH_BOOT__')
+    const html = await response.text()
+    expect(html).toContain('__DSH_BOOT__')
+    expect(html).toContain('@dsh-workbench/desktop-core')
 
     await runtime.stop()
     expect(runtime.state).toBe('idle')
@@ -58,5 +88,54 @@ describe('desktop DSH lifecycle', () => {
       code: 0,
       expected: true,
     }))
+  })
+
+  it('switches real DSH processes across isolated profile homes and workspaces', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'dsh-workbench-profile-integration-'))
+    temporaryDirectories.push(userDataPath)
+    const profiles = new ProfileStore(userDataPath, { createId: () => 'profile-second' })
+    const first = await profiles.getActiveProfile()
+    const secondProfile = await profiles.create('Second')
+    const second = await profiles.getProfile(secondProfile.id)
+    const contribution = await prepareDesktopCoreContribution(userDataPath)
+
+    await writeFile(join(first.paths.dshHome, 'profile-sentinel'), 'first')
+    await writeFile(join(second.paths.dshHome, 'profile-sentinel'), 'second')
+    await writeFile(join(first.paths.workspace, 'workspace-sentinel'), 'first')
+    await expect(access(join(second.paths.workspace, 'workspace-sentinel'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    const controller = new ProfileRuntimeController(
+      profiles,
+      (active, onExit) => {
+        prepareProfileModuleFallback(active.paths.dshHome)
+        const instance = new DshRuntime({
+          cwd: active.paths.workspace,
+          env: buildProfileEnvironment(process.env, active.paths.dshHome),
+          onExit,
+          patchFiles: [contribution.patch],
+        })
+        runtimes.push(instance)
+        return instance
+      },
+      vi.fn(),
+    )
+
+    const firstSession = await controller.startActive()
+    const secondSession = await controller.switchTo(second.profile.id)
+
+    expect(firstSession.profile.id).toBe(first.profile.id)
+    expect(secondSession.profile.id).toBe(second.profile.id)
+    expect(secondSession.paths.dshHome).not.toBe(firstSession.paths.dshHome)
+    expect(secondSession.paths.workspace).not.toBe(firstSession.paths.workspace)
+    expect(secondSession.ready.pid).not.toBe(firstSession.ready.pid)
+    expect(isProcessAlive(firstSession.ready.pid)).toBe(false)
+    expect(await isPortOpen(firstSession.ready.url)).toBe(false)
+    expect(await isPortOpen(secondSession.ready.url)).toBe(true)
+
+    await controller.stop()
+    expect(isProcessAlive(secondSession.ready.pid)).toBe(false)
+    expect(await isPortOpen(secondSession.ready.url)).toBe(false)
   })
 })

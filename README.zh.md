@@ -49,6 +49,9 @@ Web UI 后再在开启沙箱的 Electron 窗口中加载页面。DSH 用户数�
 Electron 应用的 `userData` 目录中。桌面宿主还会加载 Workbench 自己的
 `desktop-core` overlay，但不会修改用户的 DSH profile。
 
+Settings > Profiles 页面可以创建和切换彼此隔离的 DSH Home、工作目录与持久化浏览器
+分区。迁移、恢复以及凭据归属边界见 [Workbench Profiles](docs/profiles.md)。
+
 运行 `pnpm test:integration` 可以验证真实 DSH 进程、动态端口、Workbench overlay、
 Web 载荷和 IPC 优雅关闭。
 

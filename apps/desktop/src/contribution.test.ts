@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { prepareDesktopCoreContribution, renderDesktopCorePatch } from './contribution.js'
+import {
+  DESKTOP_CORE_SPECIFIER,
+  prepareDesktopCoreContribution,
+  renderDesktopCorePatch,
+} from './contribution.js'
 
 const temporaryDirectories: string[] = []
 
@@ -29,7 +31,7 @@ describe('desktop DSH contribution', () => {
     ])
   })
 
-  it('resolves the packaged plugin and writes its overlay outside the DSH profile', async () => {
+  it('resolves the packaged plugin and writes a bare overlay outside the DSH profile', async () => {
     const userDataPath = await mkdtemp(join(tmpdir(), 'dsh-workbench-desktop-test-'))
     temporaryDirectories.push(userDataPath)
 
@@ -45,7 +47,7 @@ describe('desktop DSH contribution', () => {
         insert: [
           {
             id: 'dsh-workbench-desktop-core',
-            name: pathToFileURL(contribution.entry).href,
+            name: DESKTOP_CORE_SPECIFIER,
           },
         ],
       },

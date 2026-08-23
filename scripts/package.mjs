@@ -240,11 +240,13 @@ async function readJson(path) {
 async function validateStage() {
   const dshBin = join(stageDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
+  const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   await Promise.all([
     access(join(stageDir, 'lib', 'main.js')),
     access(join(stageDir, 'lib', 'preload.cjs')),
     access(dshBin),
     access(desktopCore),
+    access(desktopCoreClient),
   ])
   await validateSymlinks(stageDir, stageDir)
   return readJson(join(dirname(dirname(dshBin)), 'package.json'))

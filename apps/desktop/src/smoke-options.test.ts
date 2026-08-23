@@ -11,8 +11,10 @@ describe('package smoke options', () => {
     expect(parsePackageSmokeOptions([
       '/Applications/DSH Workbench',
       '--dsh-workbench-smoke-report=/private/tmp/smoke/reports/result.json',
+      '--dsh-workbench-smoke-phase=verify',
       '--dsh-workbench-smoke-user-data=/private/tmp/smoke/isolated-user-data',
     ])).toEqual({
+      phase: 'verify',
       reportPath: '/private/tmp/smoke/reports/result.json',
       userDataPath: '/private/tmp/smoke/isolated-user-data',
     })
@@ -31,5 +33,10 @@ describe('package smoke options', () => {
       '--dsh-workbench-smoke-report=report.json',
       '--dsh-workbench-smoke-user-data=/tmp/user-data',
     ])).toThrow('must be absolute')
+    expect(() => parsePackageSmokeOptions([
+      '--dsh-workbench-smoke-report=/tmp/report.json',
+      '--dsh-workbench-smoke-phase=unknown',
+      '--dsh-workbench-smoke-user-data=/tmp/user-data',
+    ])).toThrow('phase')
   })
 })

@@ -250,6 +250,7 @@ function validateManifest(manifest) {
 
 function validateReport(report, context) {
   assertSmoke(report.schemaVersion === 1, 'Unsupported package smoke report schema')
+  assertSmoke(report.phase === 'verify', 'Package smoke did not complete the restart verification phase')
   assertSmoke(report.status === 'passed', report.error?.message ?? 'Packaged application reported failure')
   assertSmoke(report.app?.isPackaged === true, 'Electron did not identify the copied application as packaged')
   assertSmoke(report.app?.platform === process.platform, 'Smoke report platform does not match the host')
@@ -264,6 +265,22 @@ function validateReport(report, context) {
   assertSmoke(report.runtime?.exitCode === 0, 'Packaged DSH did not exit with code zero')
   assertSmoke(report.runtime?.pidAliveAfterStop === false, 'Packaged DSH process survived shutdown')
   assertSmoke(report.runtime?.portOpenAfterStop === false, 'Packaged DSH port survived shutdown')
+  assertSmoke(report.profiles?.activeProfileRestartPersistenceVerified === true, 'Packaged active profile did not survive restart')
+  assertSmoke(report.profiles?.defaultPartitionContinuityVerified === true, 'Packaged default profile partition continuity was not verified')
+  assertSmoke(report.profiles?.registryVerified === true, 'Packaged profile registry was not verified')
+  assertSmoke(report.profiles?.legacyMigrationVerified === true, 'Packaged legacy profile migration was not verified')
+  assertSmoke(report.profiles?.ambientCredentialFilteringVerified === true, 'Packaged ambient credential filtering was not verified')
+  assertSmoke(report.profiles?.credentialIsolationVerified === true, 'Packaged credential isolation was not verified')
+  assertSmoke(report.profiles?.dshHomeIsolationVerified === true, 'Packaged DSH home isolation was not verified')
+  assertSmoke(report.profiles?.workspaceIsolationVerified === true, 'Packaged workspace isolation was not verified')
+  assertSmoke(report.profiles?.runtimeSwitchVerified === true, 'Packaged profile runtime switching was not verified')
+  assertSmoke(report.profiles?.browserPartitionIsolationVerified === true, 'Packaged browser partition isolation was not verified')
+  assertSmoke(report.profiles?.browserPartitionRestartPersistenceVerified === true, 'Packaged browser partition restart persistence was not verified')
+  assertSmoke(report.profiles?.rendererApiVerified === true, 'Packaged profile renderer API was not verified')
+  assertSmoke(report.profiles?.rendererSelectVerified === true, 'Packaged renderer profile selection was not verified')
+  assertSmoke(report.profiles?.profileUiMounted === true, 'Packaged Profiles UI was not verified')
+  assertSmoke(report.profiles?.profileUiLifecycleVerified === true, 'Packaged Profiles UI lifecycle was not verified')
+  assertSmoke(report.profiles?.clientBundleInBootPayload === true, 'Packaged profile client bundle was not verified')
 
   const execPath = resolve(report.app.execPath)
   const resourcesPath = resolve(report.app.resourcesPath)
@@ -345,9 +362,29 @@ try {
     mkdir(cwd, { recursive: true }),
     mkdir(userDataPath, { recursive: true }),
   ])
+  const legacyDshHome = join(userDataPath, 'dsh')
+  const legacyWorkspace = join(userDataPath, 'workspace')
+  await Promise.all([
+    mkdir(legacyDshHome, { recursive: true }),
+    mkdir(legacyWorkspace, { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(join(legacyDshHome, 'package-smoke-dsh-sentinel'), 'first', { mode: 0o600 }),
+    writeFile(join(legacyWorkspace, 'package-smoke-workspace-sentinel'), 'first', { mode: 0o600 }),
+  ])
 
   result = await runPackagedApp(executable, [
     `--dsh-workbench-smoke-report=${reportPath}`,
+    '--dsh-workbench-smoke-phase=setup',
+    `--dsh-workbench-smoke-user-data=${userDataPath}`,
+  ], cwd)
+  assertSmoke(!result.timedOut, `Packaged smoke setup timed out after ${SMOKE_TIMEOUT_MS} ms`)
+  assertSmoke(result.code === 0, `Packaged smoke setup exited with ${result.code ?? result.signal}`)
+  assertSmoke(result.stdout.includes('DSH_WORKBENCH_PACKAGE_SMOKE_OK'), 'Packaged smoke setup success marker is missing')
+
+  result = await runPackagedApp(executable, [
+    `--dsh-workbench-smoke-report=${reportPath}`,
+    '--dsh-workbench-smoke-phase=verify',
     `--dsh-workbench-smoke-user-data=${userDataPath}`,
   ], cwd)
   assertSmoke(!result.timedOut, `Packaged smoke timed out after ${SMOKE_TIMEOUT_MS} ms`)

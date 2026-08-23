@@ -247,10 +247,10 @@ async function preparePackageSmokeOutputProbe(
   const directory = join(userDataPath, 'workbench', 'package-smoke-output-probe')
   const entry = join(directory, 'index.mjs')
   const patch = join(directory, 'probe.patch.json')
-  const stdoutPrefix = `${probe.marker}-stdout-before Authorization: Bear`
-  const stdoutSuffix = `er ${probe.canary}\n${probe.marker}-stdout-after\n`
-  const stderrPrefix = `${probe.marker}-stderr-before url=https://example.test/callback?access_tok`
-  const stderrSuffix = `en=${probe.canary}&safe=yes\n${probe.marker}-stderr-after\n`
+  const stdoutPrefix = `${probe.marker}-stdout-before\n`
+  const stdoutSuffix = `Authorization: Bearer ${probe.canary}\n${probe.marker}-stdout-after\n`
+  const stderrPrefix = `${probe.marker}-stderr-before\n`
+  const stderrSuffix = `url=https://example.test/callback?access_token=${probe.canary}&safe=yes\n${probe.marker}-stderr-after\n`
   const source = [
     `export const name = ${JSON.stringify(PACKAGE_SMOKE_OUTPUT_PROBE_ID)}`,
     'export async function apply() {',

@@ -190,7 +190,7 @@ describe('ProfileStore', () => {
     await expect(createStore(root).initialize()).rejects.toMatchObject({ code: 'unsafe-path' })
   })
 
-  it('requires visible bounded names and preserves private filesystem modes', async () => {
+  it('requires visible bounded names', async () => {
     const root = await useTemporaryDirectory('dsh-workbench-profile-')
     const store = createStore(root)
     await store.initialize()
@@ -198,6 +198,12 @@ describe('ProfileStore', () => {
     await expect(store.create('   ')).rejects.toMatchObject({ code: 'invalid-name' })
     await expect(store.create('bad\nname')).rejects.toMatchObject({ code: 'invalid-name' })
     await expect(store.create('x'.repeat(81))).rejects.toMatchObject({ code: 'invalid-name' })
+  })
+
+  it.skipIf(process.platform === 'win32')('preserves private filesystem modes on POSIX', async () => {
+    const root = await useTemporaryDirectory('dsh-workbench-profile-')
+    const store = createStore(root)
+    await store.initialize()
 
     await chmod(join(root, 'workbench'), 0o777)
     await store.list()

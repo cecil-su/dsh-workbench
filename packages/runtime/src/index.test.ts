@@ -11,8 +11,11 @@ import {
   buildDshProcessArgs,
   DshRuntime,
   DshRuntimeError,
+  DshOutputSanitizer,
   parseDesktopReadyMessage,
   resolveDshBin,
+  resolveDshVersion,
+  sanitizeDshOutput,
   sanitizeDshEnvironment,
 } from './index.js'
 
@@ -55,6 +58,7 @@ function isProcessAlive(pid: number): boolean {
 describe('DSH runtime', () => {
   it('resolves the pinned DSH executable', () => {
     expect(existsSync(resolveDshBin())).toBe(true)
+    expect(resolveDshVersion()).toBe('0.1.1-rc.2')
   })
 
   it('passes overlays before explicit loopback Web arguments', () => {
@@ -94,6 +98,54 @@ describe('DSH runtime', () => {
       Node_Options: '--inspect',
       node_path: '/tmp/poison',
     })).toEqual({ DSH_SAFE_VALUE: 'preserved' })
+  })
+
+  it('redacts credential-shaped output and removes terminal controls', () => {
+    const sanitized = sanitizeDshOutput([
+      '\u001B[31mwarning\u001B[0m',
+      'Authorization: Bearer runtime-canary-secret',
+      'Proxy-Authorization: Basic cnVudGltZS1jYW5hcnktc2VjcmV0',
+      'Authorization: AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE Signature=aws-signature-canary',
+      'Cookie: sessionid=session-cookie-canary; csrftoken=csrf-cookie-canary',
+      'Set-Cookie: refresh=refresh-cookie-canary; HttpOnly; Secure',
+      'api_key="runtime-canary-secret with spaces"',
+      'https://example.test/callback?access_token=runtime-canary-secret&safe=yes',
+      'sk-runtimecanarysecret',
+      'benign-marker',
+      '\u202E',
+    ].join('\n'))
+    expect(sanitized).toContain('warning')
+    expect(sanitized).toContain('benign-marker')
+    expect(sanitized).toContain('safe=yes')
+    expect(sanitized).not.toContain('\u001B')
+    expect(sanitized).not.toContain('runtime-canary-secret')
+    expect(sanitized).not.toContain('runtimecanarysecret')
+    expect(sanitized).not.toContain('cnVudGltZS1jYW5hcnktc2VjcmV0')
+    expect(sanitized).not.toContain('aws-signature-canary')
+    expect(sanitized).not.toContain('session-cookie-canary')
+    expect(sanitized).not.toContain('csrf-cookie-canary')
+    expect(sanitized).not.toContain('refresh-cookie-canary')
+    expect(sanitized).not.toContain('\u202E')
+  })
+
+  it('holds split UTF-8 and secret fields until a complete line can be sanitized', () => {
+    const sanitizer = new DshOutputSanitizer()
+    const encoded = Buffer.from('before secret=分片密钥 after\n', 'utf8')
+    const split = encoded.indexOf(Buffer.from('片', 'utf8')) + 1
+    expect(sanitizer.push(encoded.subarray(0, split))).toEqual([])
+    const output = sanitizer.push(encoded.subarray(split))
+    expect(output.join('')).toContain('before')
+    expect(output.join('')).toContain('after')
+    expect(output.join('')).not.toContain('分片密钥')
+    expect(sanitizer.finish()).toEqual([])
+  })
+
+  it('omits an unterminated output flood instead of retaining or exposing it', () => {
+    const sanitizer = new DshOutputSanitizer()
+    const output = sanitizer.push(Buffer.from(`secret=${'x'.repeat(20_000)}`))
+    expect(output).toEqual(['[output omitted: unterminated line exceeded the diagnostic limit]\n'])
+    expect(sanitizer.push(Buffer.from('still-secret'))).toEqual([])
+    expect(sanitizer.push(Buffer.from('\nbenign-marker\n'))).toEqual(['benign-marker\n'])
   })
 
   it('rejects invalid configured ports', () => {
@@ -280,6 +332,72 @@ describe('DSH runtime', () => {
     expect(error).toMatchObject({ stage: 'startup' })
     expect((error as DshRuntimeError).output).toContain('fake DSH failed before ready')
     expect(runtime.state).toBe('idle')
+  })
+
+  it('sanitizes split child output before callbacks, tails, and console forwarding', async () => {
+    const output: string[] = []
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout.push(String(chunk))
+      return true
+    })
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    const runtime = fakeRuntime('sensitive-output', {
+      onOutput: (event) => output.push(`[${event.stream}] ${event.text}`),
+    })
+    try {
+      await runtime.start()
+      await vi.waitFor(() => expect(output.join('')).toContain('marker-stderr'))
+      await runtime.stop()
+    } finally {
+      stdoutWrite.mockRestore()
+      stderrWrite.mockRestore()
+    }
+    const joined = output.join('')
+    const consoleOutput = `${stdout.join('')}\n${stderr.join('')}`
+    expect(joined).toContain('benign-before')
+    expect(joined).toContain('benign-after')
+    expect(joined).toContain('marker-stderr')
+    expect(joined).not.toContain('runtime-canary-secret')
+    expect(joined).not.toContain('\u001B')
+    expect(stdout.join('')).toContain('benign-before')
+    expect(stdout.join('')).toContain('benign-after')
+    expect(stderr.join('')).toContain('marker-stderr')
+    expect(consoleOutput).toContain('[REDACTED]')
+    expect(consoleOutput).toContain('safe=yes')
+    expect(consoleOutput).not.toContain('runtime-canary-secret')
+    expect(consoleOutput).not.toContain('\u001B')
+  })
+
+  it('contains output observer failures while the runtime is active', async () => {
+    const runtime = fakeRuntime('sensitive-output', {
+      onOutput: () => { throw new Error('injected output observer failure') },
+    })
+    const ready = await runtime.start()
+    await vi.waitFor(() => expect(isProcessAlive(ready.pid)).toBe(true))
+    await expect(runtime.stop()).resolves.toBeUndefined()
+    expect(runtime.state).toBe('idle')
+    expect(isProcessAlive(ready.pid)).toBe(false)
+  })
+
+  it('contains output observer failures while flushing a final partial line', async () => {
+    const exit = vi.fn()
+    const runtime = fakeRuntime('unterminated-output', {
+      onExit: exit,
+      onOutput: () => { throw new Error('injected close observer failure') },
+    })
+    const ready = await runtime.start()
+    await expect(runtime.stop()).resolves.toBeUndefined()
+    expect(runtime.state).toBe('idle')
+    expect(isProcessAlive(ready.pid)).toBe(false)
+    expect(exit).toHaveBeenCalledWith(expect.objectContaining({
+      expected: true,
+      output: expect.stringContaining('final-partial-marker'),
+    }))
   })
 
   it('reports an unexpected exit and can start a fresh runtime', async () => {

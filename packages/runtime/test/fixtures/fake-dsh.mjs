@@ -22,6 +22,19 @@ if (mode === 'exit-before-ready') {
   process.exit(23)
 }
 
+if (mode === 'sensitive-output') {
+  process.stdout.write('benign-before Authorization: Bear')
+  process.stderr.write('\u001B]0;unsafe title\u0007url=https://example.test/callback?access_tok')
+  setTimeout(() => {
+    process.stdout.write('er runtime-canary-secret\nbenign-after\n')
+    process.stderr.write('en=runtime-canary-secret&safe=yes marker-stderr\n')
+  }, 10)
+}
+
+if (mode === 'unterminated-output') {
+  process.stdout.write('final-partial-marker')
+}
+
 if (mode === 'invalid-ready') {
   process.send?.({
     protocolVersion: 1,

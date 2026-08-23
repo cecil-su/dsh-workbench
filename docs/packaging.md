@@ -21,6 +21,11 @@ generated ZIP outside the checkout and starts that distribution instead.
 `package:artifacts` creates the platform distribution formats and a
 `SHA256SUMS` file.
 
+For an offline or unreliable-network rebuild, set the task-specific
+`DSH_WORKBENCH_ELECTRON_DIST` environment variable to an unpacked Electron
+distribution, its release ZIP, or a directory containing the correctly named
+release ZIP. Electron Builder validates that distribution before packaging.
+
 Linux package smoke runs under the current display. In a headless environment,
 install `xvfb-run`; the smoke runner selects it automatically when `DISPLAY` is
 unset.
@@ -63,6 +68,14 @@ smoke arguments are present. A passing report proves that:
   leaves no live PID;
 - a hidden BrowserWindow loads that URL with context isolation, sandboxing,
   Web security, and Node integration restrictions verified in the renderer;
+- the official plugin inventory reports every fixed Workbench entry active,
+  a random canary emitted across separate stdout/stderr writes by a temporary
+  DSH smoke plugin reaches the console, diagnostic ring, IPC bridge, and DOM
+  only in redacted form while benign markers survive into both smoke reports;
+- smoke mode removes one first-party overlay entry while retaining Diagnostics
+  UI, observes the resulting attention state and repair button, then exercises
+  that button and proves healthy recovery with DSH PID/port and BrowserWindow
+  turnover;
 - DSH exits through graceful IPC with code zero; and
 - the supervised PID and TCP port are gone after shutdown.
 

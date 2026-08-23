@@ -12,6 +12,11 @@ const profileIpc = Object.freeze({
   restore: 'dsh-workbench:profiles:restore',
   select: 'dsh-workbench:profiles:select',
 })
+const runtimeDiagnosticsIpc = Object.freeze({
+  readTail: 'dsh-workbench:runtime-diagnostics:read-tail',
+  repair: 'dsh-workbench:runtime-diagnostics:repair',
+  snapshot: 'dsh-workbench:runtime-diagnostics:snapshot',
+})
 
 interface ProfileContext {
   generation: number
@@ -69,6 +74,17 @@ contextBridge.exposeInMainWorld('dshWorkbench', {
     rename: (profileId: string, name: string) => invoke(profileIpc.rename, { name, profileId }),
     restore: (profileId: string) => invoke(profileIpc.restore, { profileId }),
     select: (profileId: string) => invoke(profileIpc.select, { profileId }),
+  }),
+  runtimeDiagnostics: Object.freeze({
+    readTail: (afterCursor = 0, limit = 100) => invoke(runtimeDiagnosticsIpc.readTail, {
+      afterCursor,
+      limit,
+    }),
+    repair: (action: string, requestId: string) => invoke(runtimeDiagnosticsIpc.repair, {
+      action,
+      requestId,
+    }),
+    snapshot: () => invoke(runtimeDiagnosticsIpc.snapshot),
   }),
   security: Object.freeze({
     contextIsolated: process.contextIsolated,

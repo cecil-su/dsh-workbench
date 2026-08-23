@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { spawn as spawnChildProcess } from 'node:child_process'
 import { access, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { app, type BrowserWindow } from 'electron'
 import {
@@ -28,6 +29,8 @@ import {
   ProfileTransitionCoordinator,
   sendProfileContext,
 } from './profiles-ipc.js'
+import { RuntimeDiagnosticLog } from './runtime-diagnostics.js'
+import { installRuntimeDiagnosticsIpc } from './runtime-ipc.js'
 import type { PackageSmokeOptions } from './smoke-options.js'
 import {
   createWorkbenchBrowserWindow,
@@ -43,6 +46,9 @@ const WINDOW_LOAD_TIMEOUT_MS = 20_000
 const PROFILE_UI_TIMEOUT_MS = 10_000
 const PTY_SUCCESS_MARKER = 'DSH_WORKBENCH_PTY_OK'
 const AMBIENT_CREDENTIAL_PROBE_REF = 'DSH_WORKBENCH_AMBIENT_CREDENTIAL_PROBE'
+const DIAGNOSTIC_CANARY_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_CANARY'
+const DIAGNOSTIC_MARKER_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_MARKER'
+const PACKAGE_SMOKE_OUTPUT_PROBE_ID = 'dsh-workbench-package-smoke-output-probe'
 
 interface Disposable {
   dispose(): void
@@ -72,6 +78,7 @@ interface NodePtyModule {
 interface RendererSecurityProbe {
   bridgeContextIsolated?: unknown
   bridgeProfilesType?: unknown
+  bridgeRuntimeDiagnosticsType?: unknown
   bridgeSandboxed?: unknown
   documentReadyState: string
   href: string
@@ -99,6 +106,23 @@ interface PackageSmokeReport {
     uiMounted?: boolean
     valueFreeSnapshotVerified?: boolean
   }
+  diagnostics: {
+    compatibilityVerified?: boolean
+    inventoryRemoteVerified?: boolean
+    logOutputDomVerified?: boolean
+    logOutputIpcVerified?: boolean
+    logOutputRingVerified?: boolean
+    logProfileIsolationVerified?: boolean
+    logRedactionVerified?: boolean
+    outputPipelineMarker?: string
+    overlayAttentionVerified?: boolean
+    repairActionVerified?: boolean
+    repairHealthyVerified?: boolean
+    repairPidTurnoverVerified?: boolean
+    repairPortTurnoverVerified?: boolean
+    repairUiMounted?: boolean
+    staleWindowDestroyed?: boolean
+  }
   profiles: {
     activeProfileRestartPersistenceVerified?: boolean
     ambientCredentialFilteringVerified?: boolean
@@ -119,6 +143,7 @@ interface PackageSmokeReport {
   }
   runtime: {
     desktopCoreEntry?: string
+    diagnosticsUiEntry?: string
     dshBin?: string
     dshVersion?: string
     cwd?: string
@@ -139,6 +164,11 @@ interface PackageSmokeReport {
   phase: 'setup' | 'verify'
   schemaVersion: 1
   status: 'failed' | 'passed'
+}
+
+interface PackageSmokeDiagnosticProbe {
+  readonly canary: string
+  readonly marker: string
 }
 
 function assertSmoke(condition: unknown, message: string): asserts condition {
@@ -192,6 +222,87 @@ async function writeReport(reportPath: string, report: PackageSmokeReport): Prom
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
+}
+
+function readPackageSmokeDiagnosticProbe(): PackageSmokeDiagnosticProbe {
+  const canary = process.env[DIAGNOSTIC_CANARY_ENV]
+  const marker = process.env[DIAGNOSTIC_MARKER_ENV]
+  delete process.env[DIAGNOSTIC_CANARY_ENV]
+  delete process.env[DIAGNOSTIC_MARKER_ENV]
+  if (
+    typeof canary !== 'string'
+    || !/^package-smoke-canary-[a-f0-9]{64}$/u.test(canary)
+    || typeof marker !== 'string'
+    || !/^package-smoke-benign-[a-f0-9]{32}$/u.test(marker)
+  ) {
+    throw new Error('Package smoke diagnostic probe is invalid')
+  }
+  return Object.freeze({ canary, marker })
+}
+
+async function preparePackageSmokeOutputProbe(
+  userDataPath: string,
+  probe: PackageSmokeDiagnosticProbe,
+): Promise<string> {
+  const directory = join(userDataPath, 'workbench', 'package-smoke-output-probe')
+  const entry = join(directory, 'index.mjs')
+  const patch = join(directory, 'probe.patch.json')
+  const stdoutPrefix = `${probe.marker}-stdout-before Authorization: Bear`
+  const stdoutSuffix = `er ${probe.canary}\n${probe.marker}-stdout-after\n`
+  const stderrPrefix = `${probe.marker}-stderr-before url=https://example.test/callback?access_tok`
+  const stderrSuffix = `en=${probe.canary}&safe=yes\n${probe.marker}-stderr-after\n`
+  const source = [
+    `export const name = ${JSON.stringify(PACKAGE_SMOKE_OUTPUT_PROBE_ID)}`,
+    'export async function apply() {',
+    `  process.stdout.write(${JSON.stringify(stdoutPrefix)})`,
+    `  process.stderr.write(${JSON.stringify(stderrPrefix)})`,
+    '  await new Promise((resolve) => setTimeout(resolve, 100))',
+    `  process.stdout.write(${JSON.stringify(stdoutSuffix)})`,
+    `  process.stderr.write(${JSON.stringify(stderrSuffix)})`,
+    '}',
+    '',
+  ].join('\n')
+  const overlay = [{
+    insert: [{
+      id: PACKAGE_SMOKE_OUTPUT_PROBE_ID,
+      name: pathToFileURL(entry).href,
+    }],
+  }]
+  await mkdir(directory, { mode: 0o700, recursive: true })
+  await Promise.all([
+    writeFile(entry, source, { encoding: 'utf8', mode: 0o600 }),
+    writeFile(patch, `${JSON.stringify(overlay, undefined, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    }),
+  ])
+  return patch
+}
+
+async function writeBrokenFirstPartyOverlay(patch: string): Promise<void> {
+  const overlay = JSON.parse(await readFile(patch, 'utf8')) as unknown
+  assertSmoke(Array.isArray(overlay) && overlay.length === 1, 'First-party overlay shape is invalid')
+  const contribution = overlay[0] as { insert?: unknown }
+  assertSmoke(Array.isArray(contribution.insert), 'First-party overlay entries are invalid')
+  const entries = contribution.insert.filter((entry): entry is { id: string; name: string } => (
+    typeof entry === 'object'
+    && entry !== null
+    && typeof (entry as { id?: unknown }).id === 'string'
+    && typeof (entry as { name?: unknown }).name === 'string'
+  ))
+  assertSmoke(entries.length === contribution.insert.length, 'First-party overlay entry is invalid')
+  const brokenEntries = entries.filter((entry) => entry.id !== 'dsh-workbench-oauth-ui')
+  assertSmoke(
+    brokenEntries.length === entries.length - 1
+    && brokenEntries.some((entry) => entry.id === 'dsh-workbench-diagnostics-ui'),
+    'Unable to create a loadable first-party overlay failure',
+  )
+  const temporaryPatch = `${patch}.package-smoke-${process.pid}-${randomUUID()}`
+  await writeFile(temporaryPatch, `${JSON.stringify([{ insert: brokenEntries }], undefined, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+  await rename(temporaryPatch, patch)
 }
 
 function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
@@ -276,10 +387,7 @@ async function waitForRendererCondition(
   )
 }
 
-async function openProfilesUi(
-  window: BrowserWindow,
-  expectedProfiles: readonly { id: string; name: string }[],
-): Promise<void> {
+async function openSettingsDialog(window: BrowserWindow): Promise<void> {
   await window.webContents.executeJavaScript(`(() => {
     const labels = new Set(["Continue", "继续"])
     const button = [...document.querySelectorAll("button")]
@@ -296,6 +404,13 @@ async function openProfilesUi(
     if (button.getAttribute("aria-expanded") !== "true") button.click()
     return true
   })()`, 'the Settings dialog')
+}
+
+async function openProfilesUi(
+  window: BrowserWindow,
+  expectedProfiles: readonly { id: string; name: string }[],
+): Promise<void> {
+  await openSettingsDialog(window)
 
   await waitForRendererCondition(window, `(() => {
     const labels = new Set(["Profiles", "配置档案"])
@@ -395,6 +510,265 @@ async function verifyAuthorizationUi(window: BrowserWindow): Promise<void> {
     'Boolean(document.querySelector("[data-workbench-profiles]"))',
     'the restored Profiles section',
   )
+}
+
+function diagnosticMarker(profileId: string, generation: number): string {
+  return `package-smoke-runtime-${profileId}-${generation}`
+}
+
+function assertDiagnosticProbeEvidence(
+  serialized: string,
+  probe: PackageSmokeDiagnosticProbe,
+  location: string,
+): void {
+  for (const suffix of [
+    '-stdout-before',
+    '-stdout-after',
+    '-stderr-before',
+    '-stderr-after',
+  ]) {
+    assertSmoke(
+      serialized.includes(`${probe.marker}${suffix}`),
+      `${location} omitted the packaged DSH output marker ${suffix}`,
+    )
+  }
+  assertSmoke(serialized.includes('[REDACTED]'), `${location} omitted the output redaction marker`)
+  assertSmoke(serialized.includes('safe=yes'), `${location} omitted the benign query marker`)
+  assertSmoke(!serialized.includes(probe.canary), `${location} exposed the diagnostic canary`)
+}
+
+async function waitForRuntimeProbeEvidence(
+  log: RuntimeDiagnosticLog,
+  context: { generation: number; profileId: string },
+  probe: PackageSmokeDiagnosticProbe,
+): Promise<void> {
+  const deadline = Date.now() + PROFILE_UI_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const serialized = JSON.stringify(log.read(context, { limit: 200 }))
+    if (
+      serialized.includes(`${probe.marker}-stdout-after`)
+      && serialized.includes(`${probe.marker}-stderr-after`)
+    ) {
+      assertDiagnosticProbeEvidence(serialized, probe, 'Runtime diagnostic ring')
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('Timed out waiting for packaged DSH output in the runtime diagnostic ring')
+}
+
+async function readRendererDiagnostics(window: BrowserWindow): Promise<{
+  snapshot: { generation: number; profileId: string; runtimeState: string }
+  tail: { entries: Array<{ text: string }>; latestCursor: number; nextCursor: number }
+}> {
+  const serialized = await window.webContents.executeJavaScript(`(async () => JSON.stringify({
+    snapshot: await globalThis.dshWorkbench.runtimeDiagnostics.snapshot(),
+    tail: await globalThis.dshWorkbench.runtimeDiagnostics.readTail(0, 200),
+  }))()`, true) as unknown
+  assertSmoke(typeof serialized === 'string', 'Runtime diagnostics bridge returned unserializable data')
+  const value = JSON.parse(serialized) as {
+    snapshot?: { generation?: unknown; profileId?: unknown; runtimeState?: unknown }
+    tail?: { entries?: unknown; latestCursor?: unknown; nextCursor?: unknown }
+  }
+  assertSmoke(
+    Number.isSafeInteger(value.snapshot?.generation)
+    && typeof value.snapshot?.profileId === 'string'
+    && typeof value.snapshot?.runtimeState === 'string',
+    'Runtime diagnostics snapshot is invalid',
+  )
+  assertSmoke(
+    Array.isArray(value.tail?.entries)
+    && Number.isSafeInteger(value.tail?.latestCursor)
+    && Number.isSafeInteger(value.tail?.nextCursor),
+    'Runtime diagnostics tail is invalid',
+  )
+  assertSmoke(value.tail.entries.every((entry) => (
+    typeof entry === 'object'
+    && entry !== null
+    && typeof (entry as { text?: unknown }).text === 'string'
+  )), 'Runtime diagnostics tail contains an invalid entry')
+  return value as {
+    snapshot: { generation: number; profileId: string; runtimeState: string }
+    tail: { entries: Array<{ text: string }>; latestCursor: number; nextCursor: number }
+  }
+}
+
+async function openDiagnosticsUi(window: BrowserWindow): Promise<void> {
+  await openSettingsDialog(window)
+
+  await waitForRendererCondition(window, `(() => {
+    const labels = new Set(["Plugins", "插件"])
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => labels.has(candidate.innerText.trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`, 'the Plugins navigation item')
+
+  await waitForRendererCondition(window, `(() => {
+    const labels = new Set(["Workbench diagnostics", "Workbench 诊断"])
+    const button = [...document.querySelectorAll("button,[role=tab]")]
+      .find((candidate) => labels.has(candidate.innerText.trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`, 'the Workbench diagnostics tab')
+}
+
+async function readDiagnosticsCompatibility(window: BrowserWindow): Promise<{
+  health?: unknown
+  repairActionPresent: boolean
+  rows: Array<{ entryId: string | null; status: string | null }>
+}> {
+  const serialized = await window.webContents.executeJavaScript(`(() => {
+    const root = document.querySelector("[data-workbench-diagnostics]")
+    return JSON.stringify({
+      health: root?.getAttribute("data-diagnostics-health"),
+      repairActionPresent: Boolean(root?.querySelector('[data-diagnostics-action="repair-first-party-overlay"]')),
+      rows: [...(root?.querySelectorAll("[data-diagnostics-entry]") ?? [])].map((row) => ({
+        entryId: row.getAttribute("data-diagnostics-entry"),
+        status: row.getAttribute("data-diagnostics-status"),
+      })),
+    })
+  })()`, true) as unknown
+  assertSmoke(typeof serialized === 'string', 'Diagnostics compatibility state is unserializable')
+  const value = JSON.parse(serialized) as {
+    health?: unknown
+    repairActionPresent?: unknown
+    rows?: unknown
+  }
+  assertSmoke(
+    typeof value.repairActionPresent === 'boolean'
+    && Array.isArray(value.rows)
+    && value.rows.every((row) => (
+      typeof row === 'object'
+      && row !== null
+      && (typeof (row as { entryId?: unknown }).entryId === 'string'
+        || (row as { entryId?: unknown }).entryId === null)
+      && (typeof (row as { status?: unknown }).status === 'string'
+        || (row as { status?: unknown }).status === null)
+    )),
+    'Diagnostics compatibility state is invalid',
+  )
+  return value as {
+    health?: unknown
+    repairActionPresent: boolean
+    rows: Array<{ entryId: string | null; status: string | null }>
+  }
+}
+
+async function verifyDiagnosticsUi(
+  window: BrowserWindow,
+  expectedMarker: string,
+  probe: PackageSmokeDiagnosticProbe,
+): Promise<void> {
+  await openDiagnosticsUi(window)
+
+  await waitForRendererCondition(window, `(() => {
+    const root = document.querySelector("[data-workbench-diagnostics]")
+    if (!root || root.getAttribute("data-diagnostics-health") === "loading") return false
+    const expected = [
+      "dsh-workbench-authorization",
+      "dsh-workbench-desktop-core",
+      "dsh-workbench-oauth-ui",
+      "dsh-workbench-diagnostics-ui",
+    ]
+    const rows = [...root.querySelectorAll("[data-diagnostics-entry]")]
+    return rows.length === expected.length && expected.every((entryId) => rows.some((row) => (
+      row.getAttribute("data-diagnostics-entry") === entryId
+    )))
+  })()`, 'Workbench diagnostics from the official plugin inventory')
+
+  const compatibility = await readDiagnosticsCompatibility(window)
+  assertSmoke(
+    compatibility.health === 'healthy',
+    `Workbench diagnostics reported ${JSON.stringify(compatibility)}`,
+  )
+
+  const diagnostics = await readRendererDiagnostics(window)
+  const serialized = JSON.stringify(diagnostics)
+  assertSmoke(serialized.includes(expectedMarker), 'Runtime diagnostics omitted the active generation marker')
+  assertDiagnosticProbeEvidence(serialized, probe, 'Runtime diagnostics IPC')
+
+  const rootText = await window.webContents.executeJavaScript(
+    'document.querySelector("[data-workbench-diagnostics]")?.innerText ?? ""',
+    true,
+  ) as unknown
+  assertSmoke(typeof rootText === 'string' && rootText.includes(expectedMarker), 'Diagnostics UI omitted the active generation marker')
+  assertDiagnosticProbeEvidence(rootText, probe, 'Diagnostics UI DOM')
+
+  await waitForRendererCondition(window, `(() => {
+    const labels = new Set(["Profiles", "配置档案"])
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => labels.has(candidate.innerText.trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`, 'the Profiles navigation item after diagnostics verification')
+  await waitForRendererCondition(
+    window,
+    'Boolean(document.querySelector("[data-workbench-profiles]"))',
+    'the restored Profiles section after diagnostics verification',
+  )
+}
+
+async function clickDiagnosticsRestart(window: BrowserWindow): Promise<void> {
+  await openDiagnosticsUi(window)
+  await waitForRendererCondition(
+    window,
+    'document.querySelector("[data-workbench-diagnostics]")?.getAttribute("data-diagnostics-health") === "healthy"',
+    'healthy Workbench diagnostics before restart',
+  )
+  await waitForRendererCondition(window, `(() => {
+    const button = document.querySelector('[data-diagnostics-action="restart-active-runtime"]')
+    if (!button || button.disabled) return false
+    button.click()
+    return true
+  })()`, 'the diagnostics runtime restart action')
+}
+
+async function clickDiagnosticsOverlayRepair(
+  window: BrowserWindow,
+  expectedMarker: string,
+  probe: PackageSmokeDiagnosticProbe,
+): Promise<void> {
+  await openDiagnosticsUi(window)
+  await waitForRendererCondition(window, `(() => {
+    const root = document.querySelector("[data-workbench-diagnostics]")
+    const missing = root?.querySelector('[data-diagnostics-entry="dsh-workbench-oauth-ui"]')
+    const repair = root?.querySelector('[data-diagnostics-action="repair-first-party-overlay"]')
+    return root?.getAttribute("data-diagnostics-health") === "attention"
+      && missing?.getAttribute("data-diagnostics-status") === "missing"
+      && Boolean(repair && !repair.disabled)
+  })()`, 'a loadable first-party overlay failure and its repair action')
+
+  const compatibility = await readDiagnosticsCompatibility(window)
+  assertSmoke(compatibility.health === 'attention', 'Broken overlay did not require attention')
+  assertSmoke(
+    compatibility.rows.some((row) => (
+      row.entryId === 'dsh-workbench-oauth-ui' && row.status === 'missing'
+    )),
+    'Broken overlay did not report the intentionally missing OAuth UI entry',
+  )
+  assertSmoke(compatibility.repairActionPresent, 'Broken overlay did not render its repair action')
+
+  const diagnostics = await readRendererDiagnostics(window)
+  const serialized = JSON.stringify(diagnostics)
+  assertSmoke(serialized.includes(expectedMarker), 'Broken-overlay diagnostics omitted the active generation marker')
+  assertDiagnosticProbeEvidence(serialized, probe, 'Broken-overlay diagnostics IPC')
+  const rootText = await window.webContents.executeJavaScript(
+    'document.querySelector("[data-workbench-diagnostics]")?.innerText ?? ""',
+    true,
+  ) as unknown
+  assertSmoke(typeof rootText === 'string', 'Broken-overlay diagnostics DOM is unavailable')
+  assertDiagnosticProbeEvidence(rootText, probe, 'Broken-overlay diagnostics DOM')
+
+  await waitForRendererCondition(window, `(() => {
+    const button = document.querySelector('[data-diagnostics-action="repair-first-party-overlay"]')
+    if (!button || button.disabled) return false
+    button.click()
+    return true
+  })()`, 'the first-party overlay repair action')
 }
 
 async function selectProfileFromRenderer(window: BrowserWindow, profileId: string): Promise<void> {
@@ -675,6 +1049,7 @@ function waitForWindowRenderer(window: BrowserWindow, url: string): Promise<Rend
         expression: `({
           bridgeContextIsolated: globalThis.dshWorkbench?.security?.contextIsolated,
           bridgeProfilesType: typeof globalThis.dshWorkbench?.profiles?.list,
+          bridgeRuntimeDiagnosticsType: typeof globalThis.dshWorkbench?.runtimeDiagnostics?.snapshot,
           bridgeSandboxed: globalThis.dshWorkbench?.security?.sandboxed,
           documentReadyState: document.readyState,
           href: globalThis.location.href,
@@ -769,6 +1144,7 @@ async function readRendererProfileSnapshot(window: BrowserWindow): Promise<{
 }
 
 export async function runPackageSmoke(options: PackageSmokeOptions): Promise<number> {
+  const diagnosticProbe = readPackageSmokeDiagnosticProbe()
   const report: PackageSmokeReport = {
     app: {
       arch: process.arch,
@@ -781,6 +1157,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       version: app.getVersion(),
     },
     authorization: {},
+    diagnostics: { outputPipelineMarker: diagnosticProbe.marker },
     profiles: {},
     runtime: {},
     phase: options.phase,
@@ -792,11 +1169,13 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
   let controller: ProfileRuntimeController | undefined
   let transitions: ProfileTransitionCoordinator | undefined
   const runtimeExitEvents: DshRuntimeExit[] = []
+  const runtimeDiagnostics = new RuntimeDiagnosticLog()
   const runtimes: DshRuntime[] = []
   const startedSessions: ProfileRuntimeSession[] = []
   const previousAmbientCredentialProbe = process.env[AMBIENT_CREDENTIAL_PROBE_REF]
   let ambientCredentialProbeInjected = false
   let uninstallProfileIpc: (() => void) | undefined
+  let uninstallRuntimeDiagnosticsIpc: (() => void) | undefined
   let window: BrowserWindow | undefined
   let ready: DshRuntimeReady | undefined
 
@@ -814,12 +1193,21 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     const packagedAppRoot = await realpath(join(process.resourcesPath, 'app'))
     const dshBin = await realpath(resolveDshBin())
     const desktopCore = await prepareDesktopCoreContribution(options.userDataPath)
+    const outputProbePatch = await preparePackageSmokeOutputProbe(
+      options.userDataPath,
+      diagnosticProbe,
+    )
     const desktopCoreEntry = await realpath(desktopCore.entry)
+    const diagnosticsUiEntry = await realpath(desktopCore.diagnosticsEntry)
     const oauthUiEntry = await realpath(desktopCore.oauthEntry)
     assertSmoke(isPathInside(packagedAppRoot, dshBin), 'DSH executable escaped the packaged application')
     assertSmoke(
       isPathInside(packagedAppRoot, desktopCoreEntry),
       'Desktop Core entry escaped the packaged application',
+    )
+    assertSmoke(
+      isPathInside(packagedAppRoot, diagnosticsUiEntry),
+      'Diagnostics UI entry escaped the packaged application',
     )
     assertSmoke(
       isPathInside(packagedAppRoot, oauthUiEntry),
@@ -833,6 +1221,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     report.runtime.dshBin = dshBin
     report.runtime.dshVersion = dshPackage.version
     report.runtime.desktopCoreEntry = desktopCoreEntry
+    report.runtime.diagnosticsUiEntry = diagnosticsUiEntry
     report.runtime.oauthUiEntry = oauthUiEntry
 
     const allocatedProfileIds = ['package-smoke-second', 'package-smoke-ui']
@@ -940,8 +1329,14 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
 
     controller = new ProfileRuntimeController(
       profiles,
-      (active, onExit) => {
+      (active, onExit, generation) => {
         prepareProfileModuleFallback(active.paths.dshHome)
+        const diagnosticContext = { generation, profileId: active.profile.id }
+        runtimeDiagnostics.append(diagnosticContext, {
+          code: 'PACKAGE_SMOKE_RUNTIME',
+          level: 'info',
+          text: diagnosticMarker(active.profile.id, generation),
+        })
         const runtime = new DshRuntime({
           cwd: active.paths.workspace,
           env: buildProfileEnvironment(process.env, active.paths.dshHome),
@@ -949,7 +1344,8 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
             runtimeExitEvents.push(event)
             onExit(event)
           },
-          patchFiles: [desktopCore.patch],
+          onOutput: (event) => runtimeDiagnostics.appendOutput(diagnosticContext, event),
+          patchFiles: [desktopCore.patch, outputProbePatch],
         })
         runtimes.push(runtime)
         return runtime
@@ -994,10 +1390,28 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       },
       store: profiles,
     })
+    uninstallRuntimeDiagnosticsIpc = installRuntimeDiagnosticsIpc({
+      appVersion: app.getVersion(),
+      confirmRepair: async () => true,
+      controller,
+      dshVersion: dshPackage.version,
+      getWindow: () => window,
+      log: runtimeDiagnostics,
+      repairFirstPartyOverlay: async (session) => {
+        await prepareDesktopCoreContribution(options.userDataPath)
+        prepareProfileModuleFallback(session.paths.dshHome)
+      },
+      transitions,
+    })
 
     const initialSession = await controller.startActive()
     await writeSmokeProgress(options.phase, 'initial-runtime-ready')
     startedSessions.push(initialSession)
+    await waitForRuntimeProbeEvidence(runtimeDiagnostics, {
+      generation: initialSession.generation,
+      profileId: initialSession.profile.id,
+    }, diagnosticProbe)
+    report.diagnostics.logOutputRingVerified = true
     assertSmoke(initialSession.profile.id === initialProfile.profile.id, 'DSH started the wrong persisted active profile')
     await verifySessionProfileEvidence(initialSession, profileEvidenceExpectation(initialProfile))
     const response = await fetch(initialSession.ready.url, { signal: AbortSignal.timeout(10_000) })
@@ -1011,6 +1425,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     assertSmoke(
       html.includes('@dsh-workbench/oauth-ui'),
       'Packaged DSH boot payload is missing the OAuth UI client bundle',
+    )
+    assertSmoke(
+      html.includes('@dsh-workbench/diagnostics-ui'),
+      'Packaged DSH boot payload is missing the Diagnostics UI client bundle',
     )
     report.runtime.httpBootPayload = true
     report.profiles.clientBundleInBootPayload = true
@@ -1035,6 +1453,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     assertSmoke(initialWindow.probe.bridgeContextIsolated === true, 'Preload context isolation probe failed')
     assertSmoke(initialWindow.probe.bridgeSandboxed === true, 'Preload sandbox probe failed')
     assertSmoke(initialWindow.probe.bridgeProfilesType === 'function', 'Preload profile bridge is unavailable')
+    assertSmoke(
+      initialWindow.probe.bridgeRuntimeDiagnosticsType === 'function',
+      'Preload runtime diagnostics bridge is unavailable',
+    )
     assertSmoke(initialWindow.probe.processType === 'undefined', 'Renderer exposed the Node process global')
     assertSmoke(initialWindow.probe.requireType === 'undefined', 'Renderer exposed the Node require global')
     const initialBridgeSnapshot = await readRendererProfileSnapshot(initialWindow.window)
@@ -1048,6 +1470,17 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     report.authorization.officialFlowRegistered = true
     report.authorization.uiMounted = true
     report.authorization.valueFreeSnapshotVerified = true
+    await verifyDiagnosticsUi(
+      initialWindow.window,
+      diagnosticMarker(initialSession.profile.id, initialSession.generation),
+      diagnosticProbe,
+    )
+    report.diagnostics.compatibilityVerified = true
+    report.diagnostics.inventoryRemoteVerified = true
+    report.diagnostics.logOutputDomVerified = true
+    report.diagnostics.logOutputIpcVerified = true
+    report.diagnostics.logRedactionVerified = true
+    report.diagnostics.repairUiMounted = true
     if (options.phase === 'setup') {
       uiProfile = await exerciseProfileLifecycleFromRenderer(initialWindow.window, profiles)
       assertSmoke(uiProfile.id === 'package-smoke-ui', 'Renderer-created profile used an unexpected id')
@@ -1131,6 +1564,18 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     const middleWindow = middleActivation.window
     const middleBridgeSnapshot = await readRendererProfileSnapshot(middleWindow)
     assertSmoke(middleBridgeSnapshot.activeProfileId === middleProfile.profile.id, 'Profile bridge reported the wrong switched profile')
+    const middleDiagnostics = await readRendererDiagnostics(middleWindow)
+    const middleDiagnosticsText = JSON.stringify(middleDiagnostics)
+    assertSmoke(
+      middleDiagnosticsText.includes(diagnosticMarker(middleSession.profile.id, middleSession.generation)),
+      'Middle profile diagnostics omitted its active generation marker',
+    )
+    assertSmoke(
+      !middleDiagnosticsText.includes(diagnosticMarker(initialSession.profile.id, initialSession.generation)),
+      'Middle profile diagnostics inherited the previous profile generation',
+    )
+    assertDiagnosticProbeEvidence(middleDiagnosticsText, diagnosticProbe, 'Middle profile diagnostics IPC')
+    report.diagnostics.logProfileIsolationVerified = true
     if (options.phase === 'setup') {
       assertSmoke(
         (await middleWindow.webContents.session.cookies.get({ name: cookieName })).length === 0,
@@ -1186,6 +1631,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     )
 
     let reportSession = finalSession
+    let reportWindow = finalWindow
     if (options.phase === 'setup') {
       await openProfilesUi(finalWindow, expectedProfiles())
       await selectProfileFromRenderer(finalWindow, second.profile.id)
@@ -1207,7 +1653,105 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
         'Non-default profile was not committed before restart',
       )
       reportSession = persistedSession
+      reportWindow = persistedActivation.window
     }
+
+    const healthySession = reportSession
+    const healthyWindow = reportWindow
+    await openProfilesUi(healthyWindow, expectedProfiles())
+    await verifyDiagnosticsUi(
+      healthyWindow,
+      diagnosticMarker(healthySession.profile.id, healthySession.generation),
+      diagnosticProbe,
+    )
+    await writeBrokenFirstPartyOverlay(desktopCore.patch)
+    await clickDiagnosticsRestart(healthyWindow)
+    const brokenActivation = await waitForActivatedProfile(
+      healthySession.profile.id,
+      healthyWindow,
+    )
+    await transitions.waitForIdle()
+    const brokenSession = brokenActivation.session
+    startedSessions.push(brokenSession)
+    assertSmoke(
+      brokenSession.generation > healthySession.generation,
+      'Applying the broken overlay did not advance the runtime generation',
+    )
+    assertSmoke(
+      brokenSession.ready.pid !== healthySession.ready.pid,
+      'Applying the broken overlay did not replace the DSH process',
+    )
+    assertSmoke(!isProcessAlive(healthySession.ready.pid), 'The pre-failure DSH process survived restart')
+    assertSmoke(healthyWindow.isDestroyed(), 'The broken-overlay restart retained the healthy BrowserWindow')
+    await waitForRuntimeProbeEvidence(runtimeDiagnostics, {
+      generation: brokenSession.generation,
+      profileId: brokenSession.profile.id,
+    }, diagnosticProbe)
+    await clickDiagnosticsOverlayRepair(
+      brokenActivation.window,
+      diagnosticMarker(brokenSession.profile.id, brokenSession.generation),
+      diagnosticProbe,
+    )
+    report.diagnostics.overlayAttentionVerified = true
+    report.diagnostics.repairActionVerified = true
+
+    const repairedActivation = await waitForActivatedProfile(
+      brokenSession.profile.id,
+      brokenActivation.window,
+    )
+    await transitions.waitForIdle()
+    const repairedSession = repairedActivation.session
+    startedSessions.push(repairedSession)
+    assertSmoke(
+      repairedSession.generation > brokenSession.generation,
+      'Overlay repair did not advance the runtime generation',
+    )
+    assertSmoke(
+      repairedSession.ready.pid !== brokenSession.ready.pid,
+      'Overlay repair did not replace the DSH process',
+    )
+    assertSmoke(
+      !isProcessAlive(brokenSession.ready.pid),
+      'The broken-overlay DSH process survived repair',
+    )
+    assertSmoke(
+      repairedSession.ready.url !== brokenSession.ready.url,
+      'Overlay repair reused the broken runtime port instead of turning it over',
+    )
+    const brokenUrl = new URL(brokenSession.ready.url)
+    assertSmoke(
+      !(await isPortOpen(brokenUrl.hostname, Number(brokenUrl.port))),
+      'The broken-overlay DSH port survived repair',
+    )
+    assertSmoke(brokenActivation.window.isDestroyed(), 'Overlay repair left the stale BrowserWindow alive')
+    await waitForRuntimeProbeEvidence(runtimeDiagnostics, {
+      generation: repairedSession.generation,
+      profileId: repairedSession.profile.id,
+    }, diagnosticProbe)
+    await verifyDiagnosticsUi(
+      repairedActivation.window,
+      diagnosticMarker(repairedSession.profile.id, repairedSession.generation),
+      diagnosticProbe,
+    )
+    const repairedDiagnostics = await readRendererDiagnostics(repairedActivation.window)
+    const repairedDiagnosticsText = JSON.stringify(repairedDiagnostics)
+    assertSmoke(
+      repairedDiagnosticsText.includes(diagnosticMarker(repairedSession.profile.id, repairedSession.generation)),
+      'Repaired runtime diagnostics omitted the new generation marker',
+    )
+    assertSmoke(
+      !repairedDiagnosticsText.includes(diagnosticMarker(
+        brokenSession.profile.id,
+        brokenSession.generation,
+      )),
+      'Repaired runtime diagnostics retained the stale generation',
+    )
+    assertDiagnosticProbeEvidence(repairedDiagnosticsText, diagnosticProbe, 'Repaired diagnostics IPC')
+    report.diagnostics.repairHealthyVerified = true
+    report.diagnostics.repairPidTurnoverVerified = true
+    report.diagnostics.repairPortTurnoverVerified = true
+    report.diagnostics.staleWindowDestroyed = true
+    reportSession = repairedSession
 
     report.profiles.activeProfileRestartPersistenceVerified = options.phase === 'verify'
     report.profiles.ambientCredentialFilteringVerified = true
@@ -1228,6 +1772,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
   } finally {
     await writeSmokeProgress(options.phase, 'cleanup-start')
     if (window && !window.isDestroyed()) window.destroy()
+    uninstallRuntimeDiagnosticsIpc?.()
     uninstallProfileIpc?.()
     if (transitions || controller) {
       try {
@@ -1266,6 +1811,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     if (report.runtime.portOpenAfterStop) {
       captureFailure(new Error(`Packaged DSH port ${url.port} is still accepting connections`))
     }
+  }
+
+  if (JSON.stringify(report).includes(diagnosticProbe.canary)) {
+    captureFailure(new Error('Packaged smoke report exposed the diagnostic canary'))
   }
 
   if (failure) {

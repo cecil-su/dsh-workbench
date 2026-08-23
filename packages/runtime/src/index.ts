@@ -6,6 +6,7 @@ import {
 } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 const require = createRequire(import.meta.url)
 
@@ -13,6 +14,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 7_000
 const FORCE_KILL_TIMEOUT_MS = 2_000
 const MAX_OUTPUT_BYTES = 64 * 1024
+const MAX_UNTERMINATED_OUTPUT_CHARS = 16 * 1024
 const LOOPBACK_HOST = '127.0.0.1'
 const READY_MESSAGE_TYPE = 'dsh-workbench/ready'
 const SHUTDOWN_MESSAGE_TYPE = 'dsh-workbench/shutdown'
@@ -53,12 +55,18 @@ export interface DshRuntimeExit {
   signal: NodeJS.Signals | null
 }
 
+export interface DshRuntimeOutput {
+  readonly stream: 'stderr' | 'stdout'
+  readonly text: string
+}
+
 export interface DshRuntimeOptions {
   cwd?: string
   dshBin?: string
   env?: NodeJS.ProcessEnv
   execPath?: string
   onExit?: (event: DshRuntimeExit) => void
+  onOutput?: (event: DshRuntimeOutput) => void
   patchFiles?: readonly string[]
   port?: number
   /** Test seam for deterministic process-tree cleanup coverage. */
@@ -75,12 +83,83 @@ interface DesktopReadyMessage {
   url: string
 }
 
+export function sanitizeDshOutput(value: string): string {
+  const withoutTerminalControls = value
+    .replace(/\u001B(?:\][^\u0007]*(?:\u0007|\u001B\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001A\u001C-\u001F\u007F]/gu, '')
+    .replace(/[\u202A-\u202E\u2066-\u2069]/gu, '')
+  const sensitiveName = String.raw`(?:[a-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|device[_-]?code|user[_-]?code|authorization|password|secret|cookie)[a-z0-9_-]*)`
+  return withoutTerminalControls
+    .replace(/(\b(?:Proxy-)?Authorization\s*:\s*)[^\r\n]*/giu, '$1[REDACTED]')
+    .replace(/(\b(?:Set-)?Cookie\s*:\s*)[^\r\n]*/giu, '$1[REDACTED]')
+    .replace(/(\b(?:Basic|Bearer)\s+)[A-Za-z0-9._~+/-]+=*/giu, '$1[REDACTED]')
+    .replace(new RegExp(`(\\b${sensitiveName}\\b\\s*["']?\\s*[:=]\\s*)(["'])(.*?)\\2`, 'giu'), '$1$2[REDACTED]$2')
+    .replace(new RegExp(`(\\b${sensitiveName}\\b\\s*["']?\\s*[:=]\\s*)([^\\s,"';&}]+)`, 'giu'), '$1[REDACTED]')
+    .replace(new RegExp(`([?&]${sensitiveName}=)[^&#\\s]*`, 'giu'), '$1[REDACTED]')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{12,})\b/gu, '[REDACTED]')
+}
+
+export class DshOutputSanitizer {
+  readonly #decoder = new StringDecoder('utf8')
+  #discarding = false
+  #pending = ''
+
+  push(chunk: Buffer): readonly string[] {
+    this.#pending += this.#decoder.write(chunk)
+    return this.#drain(false)
+  }
+
+  finish(): readonly string[] {
+    this.#pending += this.#decoder.end()
+    return this.#drain(true)
+  }
+
+  #drain(final: boolean): readonly string[] {
+    const output: string[] = []
+    while (this.#pending.length > 0) {
+      const boundary = this.#pending.search(/[\r\n]/u)
+      if (this.#discarding) {
+        if (boundary < 0) {
+          this.#pending = ''
+          break
+        }
+        this.#pending = this.#pending.slice(boundary + 1)
+        this.#discarding = false
+        continue
+      }
+      if (boundary >= 0) {
+        const terminatorLength = this.#pending[boundary] === '\r' && this.#pending[boundary + 1] === '\n'
+          ? 2
+          : 1
+        if (boundary > MAX_UNTERMINATED_OUTPUT_CHARS) {
+          output.push('[output omitted: line exceeded the diagnostic limit]\n')
+        } else {
+          output.push(sanitizeDshOutput(this.#pending.slice(0, boundary + terminatorLength)))
+        }
+        this.#pending = this.#pending.slice(boundary + terminatorLength)
+        continue
+      }
+      if (this.#pending.length > MAX_UNTERMINATED_OUTPUT_CHARS) {
+        output.push('[output omitted: unterminated line exceeded the diagnostic limit]\n')
+        this.#pending = ''
+        this.#discarding = true
+      }
+      break
+    }
+    if (final && !this.#discarding && this.#pending.length > 0) {
+      output.push(sanitizeDshOutput(this.#pending))
+      this.#pending = ''
+    }
+    return output
+  }
+}
+
 class OutputTail {
   readonly #chunks: Buffer[] = []
   #size = 0
 
-  append(stream: 'stdout' | 'stderr', chunk: Buffer): void {
-    const tagged = Buffer.concat([Buffer.from(`[${stream}] `), chunk])
+  append(stream: 'stdout' | 'stderr', text: string): void {
+    const tagged = Buffer.from(`[${stream}] ${text}`)
     this.#chunks.push(tagged)
     this.#size += tagged.byteLength
 
@@ -238,6 +317,14 @@ function parseProfileEvidence(value: unknown): DshRuntimeProfileEvidence | undef
 export function resolveDshBin(): string {
   const packageJson = require.resolve('@deepseek-ai/dsh/package.json')
   return join(dirname(packageJson), 'lib', 'bin.js')
+}
+
+export function resolveDshVersion(): string {
+  const manifest = require('@deepseek-ai/dsh/package.json') as { version?: unknown }
+  if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
+    throw new Error('The pinned DSH package has no valid version')
+  }
+  return manifest.version
 }
 
 async function defaultReadinessProbe(url: string, signal: AbortSignal): Promise<void> {
@@ -448,6 +535,7 @@ export class DshRuntime {
   readonly #env: NodeJS.ProcessEnv
   readonly #execPath: string
   readonly #onExit: ((event: DshRuntimeExit) => void) | undefined
+  readonly #onOutput: ((event: DshRuntimeOutput) => void) | undefined
   readonly #patchFiles: readonly string[]
   readonly #port: number
   readonly #readProcessTable: () => readonly DshRuntimeProcessTableEntry[]
@@ -471,6 +559,7 @@ export class DshRuntime {
     this.#env = sanitizeDshEnvironment(options.env ?? process.env)
     this.#execPath = options.execPath ?? process.execPath
     this.#onExit = options.onExit
+    this.#onOutput = options.onOutput
     this.#patchFiles = [...options.patchFiles ?? []]
     this.#port = port
     this.#readProcessTable = options.processTable ?? readProcessTable
@@ -569,6 +658,30 @@ export class DshRuntime {
     }
     this.#child = child
 
+    const sanitizers = {
+      stderr: new DshOutputSanitizer(),
+      stdout: new DshOutputSanitizer(),
+    }
+    let outputFinished = false
+    const relayOutput = (stream: 'stderr' | 'stdout', text: string): void => {
+      if (text.length === 0) return
+      output.append(stream, text)
+      this.#emitOutput(Object.freeze({ stream, text }))
+      try {
+        if (stream === 'stdout') process.stdout.write(text)
+        else process.stderr.write(text)
+      } catch (error) {
+        this.#reportHandlerFailure('DSH console output failed:', error)
+      }
+    }
+    const finishOutput = (): void => {
+      if (outputFinished) return
+      outputFinished = true
+      for (const stream of ['stdout', 'stderr'] as const) {
+        for (const text of sanitizers[stream].finish()) relayOutput(stream, text)
+      }
+    }
+
     let resolveClose: (() => void) | undefined
     const closePromise = new Promise<void>((resolve) => {
       resolveClose = resolve
@@ -590,6 +703,11 @@ export class DshRuntime {
         resolve(ready)
       })
       child.once('close', (code, signal) => {
+        try {
+          finishOutput()
+        } catch (error) {
+          this.#reportHandlerFailure('DSH output finalization failed:', error)
+        }
         const ownsChild = this.#child === child
         const expected = ownsChild && this.#state === 'stopping'
         const wasRunning = ownsChild && this.#state === 'running'
@@ -617,12 +735,10 @@ export class DshRuntime {
     })
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      output.append('stdout', chunk)
-      process.stdout.write(chunk)
+      for (const text of sanitizers.stdout.push(chunk)) relayOutput('stdout', text)
     })
     child.stderr?.on('data', (chunk: Buffer) => {
-      output.append('stderr', chunk)
-      process.stderr.write(chunk)
+      for (const text of sanitizers.stderr.push(chunk)) relayOutput('stderr', text)
     })
 
     const deadline = Date.now() + this.#startupTimeoutMs
@@ -784,7 +900,24 @@ export class DshRuntime {
     try {
       this.#onExit(event)
     } catch (error) {
-      console.error('DSH exit handler failed:', error)
+      this.#reportHandlerFailure('DSH exit handler failed:', error)
+    }
+  }
+
+  #emitOutput(event: DshRuntimeOutput): void {
+    if (!this.#onOutput) return
+    try {
+      this.#onOutput(event)
+    } catch (error) {
+      this.#reportHandlerFailure('DSH output handler failed:', error)
+    }
+  }
+
+  #reportHandlerFailure(message: string, error: unknown): void {
+    try {
+      console.error(message, error)
+    } catch {
+      // Diagnostics must never prevent child-process ownership cleanup.
     }
   }
 }

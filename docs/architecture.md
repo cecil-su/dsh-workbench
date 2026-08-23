@@ -15,6 +15,7 @@
 apps/desktop -> packages/runtime      -> @deepseek-ai/dsh
              -> plugins/desktop-core -> @deepseek-ai/cordis
              -> plugins/oauth-ui     -> public DSH authorization contracts
+             -> plugins/diagnostics-ui -> official plugin inventory Remote
 ```
 
 Upstream packages never import Workbench packages. Product plugins may depend
@@ -60,6 +61,13 @@ credential boundaries.
 Official authorization builds on the profile boundary. The `oauth-ui` plugin
 renders DSH's neutral interaction vocabulary and delegates storage to the
 active profile's official credential provider; see [Authorization](authorization.md).
+
+Diagnostics build on the same profile generation boundary. The
+`diagnostics-ui` plugin reads plugin state only from DSH's official inventory
+Remote, while the host exposes a closed preload API for a sanitized in-memory
+log and three fixed recovery actions. Runtime/window replacement remains owned
+by the main-process transition coordinator; see
+[Diagnostics and repair](diagnostics.md).
 
 Signing, auto-update, and native lifecycle integration follow only after the
 runtime, profiles, authorization, and cross-platform package acceptance are

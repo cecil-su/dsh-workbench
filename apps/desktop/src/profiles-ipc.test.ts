@@ -1,5 +1,8 @@
+import { readFile, symlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import { prepareDesktopCoreContribution } from './contribution.js'
 import type { ProfileRuntimeSession } from './profile-runtime.js'
 import {
   authorizeProfileRequest,
@@ -9,6 +12,7 @@ import {
   publicProfileSnapshot,
   switchProfileAndActivate,
 } from './profiles-ipc.js'
+import { useTemporaryDirectory } from './test-helpers.js'
 
 const context = { generation: 3, profileId: 'profile-current' }
 const timestamp = '2026-08-23T00:00:00.000Z'
@@ -275,6 +279,119 @@ describe('profile IPC validation', () => {
       'activate:3:end',
     ])
     expect(shouldRetry).toHaveBeenCalledOnce()
+  })
+
+  it('stops the generation-fenced runtime completely before repairing and starting it again', async () => {
+    const current = runtimeSession('profile-current', 4)
+    const restarted = runtimeSession('profile-current', 5)
+    let owned: ProfileRuntimeSession | undefined = current
+    const order: string[] = []
+    let releaseStop: (() => void) | undefined
+    const stopped = new Promise<void>((resolve) => {
+      releaseStop = resolve
+    })
+    const controller = {
+      get current() { return owned },
+      async restartActive() {
+        throw new Error('repair must not use the combined restart operation')
+      },
+      async startActive() {
+        order.push('start')
+        owned = restarted
+        return restarted
+      },
+      async stop() {
+        order.push('stop:begin')
+        await stopped
+        owned = undefined
+        order.push('stop:end')
+      },
+      async switchTo() { return owned ?? current },
+    }
+    const activate = vi.fn(async () => {})
+    const repair = vi.fn(async (session: ProfileRuntimeSession) => {
+      expect(session).toBe(current)
+      expect(owned).toBeUndefined()
+      order.push('repair')
+    })
+    const transitions = new ProfileTransitionCoordinator(controller, activate)
+
+    await expect(transitions.restartActive(3)).rejects.toThrow(/stale generation/u)
+    expect(order).toEqual([])
+    expect(repair).not.toHaveBeenCalled()
+
+    const restarting = transitions.restartActive(4, repair)
+    await vi.waitFor(() => expect(order).toEqual(['stop:begin']))
+    expect(repair).not.toHaveBeenCalled()
+    releaseStop?.()
+
+    await expect(restarting).resolves.toBe(restarted)
+    expect(order).toEqual(['stop:begin', 'stop:end', 'repair', 'start'])
+    expect(activate).toHaveBeenCalledWith(restarted)
+    await expect(transitions.restartActive(4)).rejects.toThrow(/stale generation/u)
+  })
+
+  it('does not restart after an unsafe overlay repair fails or overwrite its outside target', async () => {
+    const current = runtimeSession('profile-current', 4)
+    let owned: ProfileRuntimeSession | undefined = current
+    const order: string[] = []
+    const userDataPath = await useTemporaryDirectory('dsh-workbench-repair-user-data-')
+    const outside = await useTemporaryDirectory('dsh-workbench-repair-outside-')
+    const outsidePatch = join(outside, 'desktop-core.patch.json')
+    await writeFile(outsidePatch, 'outside-sentinel', 'utf8')
+    await symlink(outside, join(userDataPath, 'workbench'), 'junction')
+    const controller = {
+      get current() { return owned },
+      async restartActive() {
+        throw new Error('repair must not use the combined restart operation')
+      },
+      async startActive() {
+        order.push('start')
+        return current
+      },
+      async stop() {
+        order.push('stop')
+        owned = undefined
+      },
+      async switchTo() { return owned ?? current },
+    }
+    const activate = vi.fn(async () => {})
+    const transitions = new ProfileTransitionCoordinator(controller, activate)
+
+    await expect(transitions.restartActive(4, async () => {
+      order.push('repair')
+      await prepareDesktopCoreContribution(userDataPath)
+    })).rejects.toThrow(/real directory/u)
+
+    expect(order).toEqual(['stop', 'repair'])
+    expect(owned).toBeUndefined()
+    expect(activate).not.toHaveBeenCalled()
+    await expect(readFile(outsidePatch, 'utf8')).resolves.toBe('outside-sentinel')
+  })
+
+  it('stops a restarted runtime when its replacement window cannot be activated', async () => {
+    const current = runtimeSession('profile-current', 7)
+    const restarted = runtimeSession('profile-current', 8)
+    let owned: ProfileRuntimeSession | undefined = current
+    const controller = {
+      get current() { return owned },
+      async restartActive() {
+        throw new Error('repair must not use the combined restart operation')
+      },
+      async startActive() {
+        owned = restarted
+        return restarted
+      },
+      async stop() { owned = undefined },
+      async switchTo() { return owned ?? current },
+    }
+    const transitions = new ProfileTransitionCoordinator(
+      controller,
+      async () => { throw new Error('window load failed') },
+    )
+
+    await expect(transitions.restartActive(7)).rejects.toThrow('window load failed')
+    expect(owned).toBeUndefined()
   })
 
   it('waits for active transitions before shutdown and rejects later recovery', async () => {

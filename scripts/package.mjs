@@ -26,6 +26,7 @@ const stageDir = join(distRoot, 'package-stage')
 const outputDir = join(distRoot, 'artifacts')
 const releaseUploadDir = join(distRoot, 'release-upload')
 const mode = process.argv.slice(2)
+const configuredElectronDist = process.env.DSH_WORKBENCH_ELECTRON_DIST?.trim()
 
 if (mode.length !== 1 || !['--artifacts', '--dir'].includes(mode[0])) {
   throw new Error('Usage: node scripts/package.mjs --dir|--artifacts')
@@ -243,6 +244,8 @@ async function validateStage() {
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
   const oauthUiClient = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'client.js')
+  const diagnosticsUi = join(stageDir, 'node_modules', '@dsh-workbench', 'diagnostics-ui', 'lib', 'index.js')
+  const diagnosticsUiClient = join(stageDir, 'node_modules', '@dsh-workbench', 'diagnostics-ui', 'lib', 'client.js')
   await Promise.all([
     access(join(stageDir, 'lib', 'main.js')),
     access(join(stageDir, 'lib', 'preload.cjs')),
@@ -251,6 +254,8 @@ async function validateStage() {
     access(desktopCoreClient),
     access(oauthUi),
     access(oauthUiClient),
+    access(diagnosticsUi),
+    access(diagnosticsUiClient),
   ])
   await validateSymlinks(stageDir, stageDir)
   return readJson(join(dirname(dirname(dshBin)), 'package.json'))
@@ -402,6 +407,7 @@ const dshPackage = await validateStage()
 
 const config = {
   ...baseConfig,
+  ...(configuredElectronDist ? { electronDist: configuredElectronDist } : {}),
   afterPack: async (context) => {
     const resourcesPath = process.platform === 'darwin'
       ? join(

@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url)
 const FIRST_PARTY_PROFILE_PACKAGES = [
   '@dsh-workbench/desktop-core',
   '@dsh-workbench/oauth-ui',
+  '@dsh-workbench/diagnostics-ui',
 ] as const
 
 function pathKind(path: string): 'directory' | 'missing' | 'other' | 'symlink' {

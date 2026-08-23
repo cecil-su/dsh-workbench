@@ -20,6 +20,7 @@ export interface ProfileRuntimeSession extends ActiveProfile {
 export type ProfileRuntimeFactory = (
   active: ActiveProfile,
   onExit: (event: DshRuntimeExit) => void,
+  generation: number,
 ) => ProfileRuntimeAdapter
 
 export interface UnexpectedProfileRuntimeExit {
@@ -62,6 +63,10 @@ export class ProfileRuntimeController {
 
   get current(): ProfileRuntimeSession | undefined {
     return this.#session
+  }
+
+  get state(): DshRuntimeState {
+    return this.#runtime?.state ?? 'idle'
   }
 
   startActive(): Promise<ProfileRuntimeSession> {
@@ -155,7 +160,7 @@ export class ProfileRuntimeController {
     let instance: ProfileRuntimeAdapter | undefined
     instance = this.#createRuntime(active, (event) => {
       if (instance) this.#handleExit(instance, generation, event)
-    })
+    }, generation)
     this.#runtime = instance
     try {
       const ready = await instance.start()

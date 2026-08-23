@@ -22,7 +22,7 @@ export interface PublicProfileSnapshot {
   readonly schemaVersion: 1
 }
 
-interface ProfileRequestContext {
+export interface ProfileRequestContext {
   readonly generation: number
   readonly profileId: string
 }
@@ -46,7 +46,7 @@ interface ProfileLifecycleController extends ProfileSessionSwitcher {
   stop(): Promise<void>
 }
 
-interface AuthorizedRequest {
+export interface AuthorizedRequest {
   readonly context: ProfileRequestContext
   readonly name?: string
   readonly profileId?: string
@@ -259,6 +259,58 @@ export class ProfileTransitionCoordinator {
         profileId,
         () => this.#shutdownRequested,
       )
+      return session
+    })
+  }
+
+  restartActive(
+    expectedGeneration: number,
+    afterStopBeforeStart: (session: ProfileRuntimeSession) => Promise<void> = async () => {},
+  ): Promise<ProfileRuntimeSession> {
+    return this.#enqueue(async () => {
+      this.#assertAcceptingTransitions()
+      const current = this.#controller.current
+      if (!current || current.generation !== expectedGeneration) {
+        throw new Error('Runtime restart belongs to a stale generation')
+      }
+
+      await this.#controller.stop()
+      if (this.#controller.current) {
+        throw new Error('Runtime remained active after it was stopped for repair')
+      }
+      this.#assertAcceptingTransitions()
+      await afterStopBeforeStart(current)
+      if (this.#controller.current) {
+        try {
+          await this.#controller.stop()
+        } catch (stopError) {
+          throw new AggregateError(
+            [new Error('Runtime ownership changed while repair was in progress'), stopError],
+            'Runtime ownership changed during repair and could not be stopped',
+          )
+        }
+        throw new Error('Runtime ownership changed while repair was in progress')
+      }
+      this.#assertAcceptingTransitions()
+
+      const session = await this.#controller.startActive()
+      if (this.#shutdownRequested) {
+        await this.#controller.stop()
+        throw new Error('Workbench profile lifecycle is shutting down')
+      }
+      try {
+        await this.#activateSession(session)
+      } catch (error) {
+        try {
+          await this.#controller.stop()
+        } catch (stopError) {
+          throw new AggregateError(
+            [error, stopError],
+            'The restarted runtime could not be displayed or stopped',
+          )
+        }
+        throw error
+      }
       return session
     })
   }

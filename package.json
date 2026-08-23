@@ -10,13 +10,13 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm typecheck && pnpm test",
-    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/desktop dev",
+    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm --filter @dsh-workbench/desktop dev",
     "package:artifacts": "pnpm build && node scripts/package.mjs --artifacts",
     "package:dir": "pnpm build && node scripts/package.mjs --dir",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm --filter @dsh-workbench/desktop test:integration",
     "test:package": "node scripts/package-smoke.mjs",
-    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm -r --if-present typecheck"
+    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm -r --if-present typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

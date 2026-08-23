@@ -27,7 +27,8 @@ Electron desktop host
         |
         `-- product plugins
                 +-- desktop-core
-                `-- oauth-ui
+                +-- oauth-ui
+                `-- diagnostics-ui
 ```
 
 The project does not fork or modify DSH Core. Any temporary upstream patch must
@@ -63,6 +64,12 @@ Settings > Sign-in & authorization delegates provider login and local sign-out
 to the official services in the pinned DSH release. Workbench never owns or
 returns credential values. See [Authorization](docs/authorization.md).
 
+Settings > Plugins > Workbench diagnostics combines the official DSH plugin
+inventory with a fixed first-party compatibility projection and bounded,
+redacted runtime logs. Its repair actions can clear the active log, restart the
+active DSH runtime, or recreate only the Workbench-owned overlay and package
+links before restarting. See [Diagnostics and repair](docs/diagnostics.md).
+
 Run `pnpm test:integration` to exercise the real DSH process, dynamic port,
 Workbench overlay, Web payload, and graceful IPC shutdown.
 
@@ -79,6 +86,7 @@ apps/desktop/          Electron main and preload processes
 packages/runtime/      DSH child-process lifecycle and readiness checks
 plugins/desktop-core/  First-party Cordis plugin entrypoint
 plugins/oauth-ui/      Official DSH authorization controls
+plugins/diagnostics-ui/ First-party compatibility and runtime diagnostics
 docs/                  Architecture and maintenance decisions
 patches/               Exceptional, temporary upstream patches only
 upstream/              Exact upstream version metadata

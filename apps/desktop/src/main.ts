@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, clipboard, dialog } from 'electron'
 import {
   DshRuntime,
   DshRuntimeError,
+  resolveDshVersion,
+  sanitizeDshOutput,
 } from '@dsh-workbench/runtime'
 
 import { prepareDesktopCoreContribution } from './contribution.js'
@@ -21,6 +23,11 @@ import {
 } from './profiles-ipc.js'
 import { parsePackageSmokeOptions } from './smoke-options.js'
 import {
+  RuntimeDiagnosticLog,
+  runtimeFailureDiagnostic,
+} from './runtime-diagnostics.js'
+import { installRuntimeDiagnosticsIpc } from './runtime-ipc.js'
+import {
   createWorkbenchBrowserWindow,
   profileSessionPartition,
 } from './window.js'
@@ -32,15 +39,18 @@ let runtimeController: ProfileRuntimeController | undefined
 let profileTransitions: ProfileTransitionCoordinator | undefined
 let profileTransitionInitialization: Promise<ProfileTransitionCoordinator> | undefined
 let uninstallProfileIpc: (() => void) | undefined
+let uninstallRuntimeDiagnosticsIpc: (() => void) | undefined
 let windowOpenPromise: Promise<void> | undefined
 let windowReplacementInProgress = false
+const runtimeDiagnostics = new RuntimeDiagnosticLog()
 
 function describeError(error: unknown): string {
-  if (error instanceof DshRuntimeError) {
-    return `${error.message} (${error.stage})`
-  }
-  if (error instanceof Error) return error.message
-  return String(error)
+  const description = error instanceof DshRuntimeError
+    ? `${error.message} (${error.stage})`
+    : error instanceof Error
+      ? error.message
+      : String(error)
+  return sanitizeDshOutput(description).slice(0, 1_000)
 }
 
 function logRuntimeError(message: string, error: unknown): void {
@@ -51,22 +61,28 @@ function logRuntimeError(message: string, error: unknown): void {
 }
 
 async function promptForRetry(message: string, error: unknown): Promise<boolean> {
-  const options = {
-    type: 'error' as const,
-    title: 'DSH Workbench',
-    message,
-    detail: describeError(error),
-    buttons: ['Retry', 'Quit'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  }
+  while (true) {
+    const options = {
+      type: 'error' as const,
+      title: 'DSH Workbench',
+      message,
+      detail: describeError(error),
+      buttons: ['Retry', 'Copy diagnostics', 'Quit'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    }
 
-  const window = mainWindow
-  const result = window && !window.isDestroyed()
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options)
-  return result.response === 0
+    const window = mainWindow
+    const result = window && !window.isDestroyed()
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options)
+    if (result.response === 1) {
+      clipboard.writeText(runtimeFailureDiagnostic(error))
+      continue
+    }
+    return result.response === 0
+  }
 }
 
 function scheduleUnexpectedRuntimeExit(exit: UnexpectedProfileRuntimeExit): void {
@@ -96,12 +112,28 @@ async function getProfileTransitions(): Promise<ProfileTransitionCoordinator> {
     const desktopCore = await prepareDesktopCoreContribution(userDataPath)
     const controller = new ProfileRuntimeController(
       profiles,
-      (active, onExit) => {
+      (active, onExit, generation) => {
         prepareProfileModuleFallback(active.paths.dshHome)
+        const diagnosticContext = { generation, profileId: active.profile.id }
+        runtimeDiagnostics.append(diagnosticContext, {
+          code: 'RUNTIME_STARTING',
+          level: 'info',
+          text: `Starting DSH for profile ${active.profile.name}.`,
+        })
         return new DshRuntime({
           cwd: active.paths.workspace,
           env: buildProfileEnvironment(process.env, active.paths.dshHome),
-          onExit,
+          onExit: (event) => {
+            runtimeDiagnostics.append(diagnosticContext, {
+              code: event.expected ? 'RUNTIME_STOPPED' : 'RUNTIME_EXITED_UNEXPECTEDLY',
+              level: event.expected ? 'info' : 'error',
+              text: event.expected
+                ? 'DSH stopped.'
+                : `DSH exited unexpectedly (code ${event.code ?? 'none'}, signal ${event.signal ?? 'none'}).`,
+            })
+            onExit(event)
+          },
+          onOutput: (event) => runtimeDiagnostics.appendOutput(diagnosticContext, event),
           patchFiles: [desktopCore.patch],
         })
       },
@@ -128,12 +160,59 @@ async function getProfileTransitions(): Promise<ProfileTransitionCoordinator> {
       },
       controller,
       getWindow: () => mainWindow,
-      selectProfile: (profileId) => transitions.select(profileId),
+      selectProfile: async (profileId) => {
+        const session = await transitions.select(profileId)
+        runtimeDiagnostics.append({
+          generation: session.generation,
+          profileId: session.profile.id,
+        }, {
+          code: 'PROFILE_SELECTED',
+          level: 'info',
+          text: `Profile ${session.profile.name} is active.`,
+        })
+        return session
+      },
       store: profiles,
+    })
+    const uninstallDiagnostics = installRuntimeDiagnosticsIpc({
+      appVersion: app.getVersion(),
+      confirmRepair: async (action, session) => {
+        const label = action === 'repair-first-party-overlay'
+          ? 'Repair Workbench plugins and restart DSH?'
+          : 'Restart DSH for this profile?'
+        const detail = action === 'repair-first-party-overlay'
+          ? 'Workbench will recreate only its own plugin overlay and package links. Third-party plugins and profile data are not changed.'
+          : 'Running agent operations in this profile will be interrupted.'
+        const options = {
+          type: 'warning' as const,
+          title: 'DSH Workbench diagnostics',
+          message: label,
+          detail: `${detail}\n\nProfile: ${session.profile.name}`,
+          buttons: ['Continue', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        }
+        const window = mainWindow
+        const result = window && !window.isDestroyed()
+          ? await dialog.showMessageBox(window, options)
+          : await dialog.showMessageBox(options)
+        return result.response === 0
+      },
+      controller,
+      dshVersion: resolveDshVersion(),
+      getWindow: () => mainWindow,
+      log: runtimeDiagnostics,
+      repairFirstPartyOverlay: async (session) => {
+        await prepareDesktopCoreContribution(userDataPath)
+        prepareProfileModuleFallback(session.paths.dshHome)
+      },
+      transitions,
     })
     runtimeController = controller
     profileTransitions = transitions
     uninstallProfileIpc = uninstall
+    uninstallRuntimeDiagnosticsIpc = uninstallDiagnostics
     return transitions
   })()
 
@@ -200,7 +279,15 @@ async function performOpenMainWindowWithRecovery(): Promise<void> {
   while (!quitting) {
     try {
       const transitions = await getProfileTransitions()
-      await transitions.startActive()
+      const session = await transitions.startActive()
+      runtimeDiagnostics.append({
+        generation: session.generation,
+        profileId: session.profile.id,
+      }, {
+        code: 'RUNTIME_READY',
+        level: 'info',
+        text: `DSH is ready for profile ${session.profile.name}.`,
+      })
       return
     } catch (error) {
       logRuntimeError('Failed to open DSH Workbench:', error)
@@ -248,9 +335,13 @@ async function recoverFromUnexpectedRuntimeExit(exit: UnexpectedProfileRuntimeEx
   )
 
   const transitions = await getProfileTransitions()
+  const diagnosticError = Object.assign(
+    new Error(`Exit code ${event.code ?? 'none'}, signal ${event.signal ?? 'none'}`),
+    { output: event.output },
+  )
   const recovered = await transitions.recover(session, () => promptForRetry(
     'DeepSeek Harness stopped unexpectedly.',
-    new Error(`Exit code ${event.code ?? 'none'}, signal ${event.signal ?? 'none'}`),
+    diagnosticError,
   ))
   if (!recovered && !quitting) app.quit()
 }
@@ -268,6 +359,8 @@ async function handleFatalError(error: unknown): Promise<void> {
 
   uninstallProfileIpc?.()
   uninstallProfileIpc = undefined
+  uninstallRuntimeDiagnosticsIpc?.()
+  uninstallRuntimeDiagnosticsIpc = undefined
   dialog.showErrorBox('DSH Workbench', describeError(error))
   app.exit(1)
 }
@@ -305,6 +398,8 @@ function installApplicationLifecycle(): void {
     quitting = true
     uninstallProfileIpc?.()
     uninstallProfileIpc = undefined
+    uninstallRuntimeDiagnosticsIpc?.()
+    uninstallRuntimeDiagnosticsIpc = undefined
     void (profileTransitions?.shutdown() ?? runtimeController?.stop() ?? Promise.resolve()).catch((error: unknown) => {
       logRuntimeError('Failed to stop DSH during application shutdown:', error)
     }).finally(() => app.quit())

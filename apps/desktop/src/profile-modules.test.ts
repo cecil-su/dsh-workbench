@@ -27,6 +27,10 @@ describe('prepareProfileModuleFallback', () => {
     const expectedOauth = dirname(require.resolve('@dsh-workbench/oauth-ui/package.json'))
     expect((await lstat(oauthLink)).isSymbolicLink()).toBe(true)
     expect(await realpath(oauthLink)).toBe(await realpath(expectedOauth))
+    const diagnosticsLink = join(dshHome, 'profiles', 'node_modules', '@dsh-workbench', 'diagnostics-ui')
+    const expectedDiagnostics = dirname(require.resolve('@dsh-workbench/diagnostics-ui/package.json'))
+    expect((await lstat(diagnosticsLink)).isSymbolicLink()).toBe(true)
+    expect(await realpath(diagnosticsLink)).toBe(await realpath(expectedDiagnostics))
     expect(() => prepareProfileModuleFallback(dshHome)).not.toThrow()
   })
 

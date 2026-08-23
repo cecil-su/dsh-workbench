@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import {
   access,
   cp,
@@ -19,6 +20,8 @@ const smokeOutputDirectory = join(root, 'dist', 'smoke')
 const MAX_OUTPUT_BYTES = 128 * 1024
 const SMOKE_TIMEOUT_MS = 120_000
 const TASKKILL_TIMEOUT_MS = 10_000
+const DIAGNOSTIC_CANARY_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_CANARY'
+const DIAGNOSTIC_MARKER_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_MARKER'
 const UNSAFE_ELECTRON_ENVIRONMENT_KEYS = new Set([
   'ELECTRON_RUN_AS_NODE',
   'NODE_OPTIONS',
@@ -154,11 +157,17 @@ async function terminateTimedOutProcessTree(pid) {
   }
 }
 
-async function runPackagedApp(executable, args, cwd) {
+async function runPackagedApp(
+  executable,
+  args,
+  cwd,
+  environmentOverrides = {},
+  forbiddenOutput,
+) {
   const useXvfb = process.platform === 'linux' && !process.env.DISPLAY
   const command = useXvfb ? 'xvfb-run' : executable
   const commandArgs = useXvfb ? ['-a', executable, ...args] : args
-  const environment = { ...process.env }
+  const environment = { ...process.env, ...environmentOverrides }
   for (const key of Object.keys(environment)) {
     if (UNSAFE_ELECTRON_ENVIRONMENT_KEYS.has(key.toUpperCase())) delete environment[key]
   }
@@ -172,8 +181,16 @@ async function runPackagedApp(executable, args, cwd) {
     })
     let stdout = ''
     let stderr = ''
+    let forbiddenOutputExposed = false
+    const forbiddenTails = { stderr: '', stdout: '' }
     let settled = false
     let timedOut = false
+    const observeForbiddenOutput = (stream, chunk) => {
+      if (!forbiddenOutput || forbiddenOutputExposed) return
+      const combined = forbiddenTails[stream] + chunk
+      if (combined.includes(forbiddenOutput)) forbiddenOutputExposed = true
+      forbiddenTails[stream] = combined.slice(-(forbiddenOutput.length - 1))
+    }
     const finish = (error, value) => {
       if (settled) return
       settled = true
@@ -185,9 +202,11 @@ async function runPackagedApp(executable, args, cwd) {
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk) => {
+      observeForbiddenOutput('stdout', chunk)
       stdout = appendBounded(stdout, chunk)
     })
     child.stderr.on('data', (chunk) => {
+      observeForbiddenOutput('stderr', chunk)
       stderr = appendBounded(stderr, chunk)
     })
     child.once('error', (error) => {
@@ -200,6 +219,7 @@ async function runPackagedApp(executable, args, cwd) {
         finish(undefined, {
           cleanupError: 'Packaged process has no PID for timeout cleanup',
           code: child.exitCode,
+          forbiddenOutputExposed,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -211,6 +231,7 @@ async function runPackagedApp(executable, args, cwd) {
       void terminateTimedOutProcessTree(child.pid).then(
         () => finish(undefined, {
           code: child.exitCode,
+          forbiddenOutputExposed,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -219,6 +240,7 @@ async function runPackagedApp(executable, args, cwd) {
         (error) => finish(undefined, {
           cleanupError: asError(error).message,
           code: child.exitCode,
+          forbiddenOutputExposed,
           signal: child.signalCode,
           stderr,
           stdout,
@@ -229,13 +251,46 @@ async function runPackagedApp(executable, args, cwd) {
 
     child.once('close', (code, signal) => {
       if (timedOut) return
-      finish(undefined, { code, signal, stderr, stdout, timedOut })
+      finish(undefined, { code, forbiddenOutputExposed, signal, stderr, stdout, timedOut })
     })
   })
 }
 
 function asError(error) {
   return error instanceof Error ? error : new Error(String(error))
+}
+
+function assertDiagnosticConsoleEvidence(result, probe, phase) {
+  assertSmoke(
+    result.forbiddenOutputExposed === false,
+    `Packaged smoke ${phase} console exposed the canary`,
+  )
+  assertSmoke(
+    result.stdout.includes(`${probe.marker}-stdout-before`)
+      && result.stdout.includes(`${probe.marker}-stdout-after`),
+    `Packaged smoke ${phase} stdout omitted the DSH output probe`,
+  )
+  assertSmoke(
+    result.stderr.includes(`${probe.marker}-stderr-before`)
+      && result.stderr.includes(`${probe.marker}-stderr-after`),
+    `Packaged smoke ${phase} stderr omitted the DSH output probe`,
+  )
+  const combined = `${result.stdout}\n${result.stderr}`
+  assertSmoke(combined.includes('[REDACTED]'), `Packaged smoke ${phase} console omitted redaction`)
+  assertSmoke(combined.includes('safe=yes'), `Packaged smoke ${phase} console omitted benign output`)
+  assertSmoke(!combined.includes(probe.canary), `Packaged smoke ${phase} console exposed the canary`)
+}
+
+function redactDiagnosticCanary(value, canary) {
+  return typeof value === 'string' ? value.replaceAll(canary, '[PACKAGE_SMOKE_CANARY_REDACTED]') : value
+}
+
+function sanitizedProcessResult(result, canary) {
+  return result ? {
+    ...result,
+    stderr: redactDiagnosticCanary(result.stderr, canary),
+    stdout: redactDiagnosticCanary(result.stdout, canary),
+  } : result
 }
 
 function validateManifest(manifest) {
@@ -284,6 +339,24 @@ function validateReport(report, context) {
   assertSmoke(report.authorization?.uiMounted === true, 'Packaged authorization UI was not verified')
   assertSmoke(report.authorization?.officialFlowRegistered === true, 'Packaged official authorization flow was not registered')
   assertSmoke(report.authorization?.valueFreeSnapshotVerified === true, 'Packaged authorization snapshot was not verified as value-free')
+  assertSmoke(report.diagnostics?.compatibilityVerified === true, 'Packaged plugin compatibility was not verified')
+  assertSmoke(report.diagnostics?.inventoryRemoteVerified === true, 'Packaged official plugin inventory Remote was not verified')
+  assertSmoke(report.diagnostics?.logOutputDomVerified === true, 'Packaged DSH output did not reach the diagnostics DOM')
+  assertSmoke(report.diagnostics?.logOutputIpcVerified === true, 'Packaged DSH output did not cross the diagnostics IPC bridge')
+  assertSmoke(report.diagnostics?.logOutputRingVerified === true, 'Packaged DSH output did not reach the diagnostic ring')
+  assertSmoke(report.diagnostics?.logProfileIsolationVerified === true, 'Packaged runtime log isolation was not verified')
+  assertSmoke(report.diagnostics?.logRedactionVerified === true, 'Packaged runtime log redaction was not verified')
+  assertSmoke(report.diagnostics?.outputPipelineMarker === context.diagnosticProbe.marker, 'Package smoke app report omitted the DSH output marker')
+  assertSmoke(report.diagnostics?.overlayAttentionVerified === true, 'Packaged diagnostics did not prove a loadable broken overlay')
+  assertSmoke(report.diagnostics?.repairActionVerified === true, 'Packaged diagnostics repair action was not exercised')
+  assertSmoke(report.diagnostics?.repairHealthyVerified === true, 'Packaged diagnostics did not recover a healthy overlay')
+  assertSmoke(report.diagnostics?.repairPidTurnoverVerified === true, 'Packaged overlay repair did not replace DSH')
+  assertSmoke(report.diagnostics?.repairPortTurnoverVerified === true, 'Packaged overlay repair did not turn over its port')
+  assertSmoke(report.diagnostics?.repairUiMounted === true, 'Packaged diagnostics UI was not verified')
+  assertSmoke(report.diagnostics?.staleWindowDestroyed === true, 'Packaged overlay repair retained a stale window')
+  const serializedReport = JSON.stringify(report)
+  assertSmoke(serializedReport.includes(context.diagnosticProbe.marker), 'Package smoke app report omitted benign output evidence')
+  assertSmoke(!serializedReport.includes(context.diagnosticProbe.canary), 'Package smoke app report exposed the diagnostics canary')
 
   const execPath = resolve(report.app.execPath)
   const resourcesPath = resolve(report.app.resourcesPath)
@@ -291,20 +364,31 @@ function validateReport(report, context) {
   const runtimeCwd = resolve(report.runtime.cwd)
   const dshBin = resolve(report.runtime.dshBin)
   const desktopCoreEntry = resolve(report.runtime.desktopCoreEntry)
+  const diagnosticsUiEntry = resolve(report.runtime.diagnosticsUiEntry)
   const packagedAppPath = join(resourcesPath, 'app')
   assertSmoke(execPath === context.executable, 'Smoke process did not run the copied executable')
   assertSmoke(resourcesPath === context.resourcesPath, 'Smoke process used an unexpected resources directory')
   assertSmoke(isPathInside(packagedAppPath, dshBin), 'Smoke DSH executable escaped copied resources')
   assertSmoke(isPathInside(packagedAppPath, desktopCoreEntry), 'Smoke Desktop Core escaped copied resources')
+  assertSmoke(isPathInside(packagedAppPath, diagnosticsUiEntry), 'Smoke Diagnostics UI escaped copied resources')
   assertSmoke(isPathInside(context.temporaryRoot, userDataPath), 'Smoke user data was not isolated')
   assertSmoke(isPathInside(context.temporaryRoot, runtimeCwd), 'Smoke runtime cwd was not isolated')
   assertSmoke(!isPathInside(root, execPath), 'Packaged smoke executed inside the source checkout')
   assertSmoke(!isPathInside(root, dshBin), 'Packaged DSH resolved inside the source checkout')
   assertSmoke(!isPathInside(root, desktopCoreEntry), 'Packaged Desktop Core resolved inside the source checkout')
+  assertSmoke(!isPathInside(root, diagnosticsUiEntry), 'Packaged Diagnostics UI resolved inside the source checkout')
 }
 
 await mkdir(smokeOutputDirectory, { recursive: true })
 const expectedArch = process.env.DSH_WORKBENCH_EXPECTED_ARCH ?? process.arch
+const diagnosticProbe = Object.freeze({
+  canary: `package-smoke-canary-${randomBytes(32).toString('hex')}`,
+  marker: `package-smoke-benign-${randomBytes(16).toString('hex')}`,
+})
+const diagnosticProbeEnvironment = {
+  [DIAGNOSTIC_CANARY_ENV]: diagnosticProbe.canary,
+  [DIAGNOSTIC_MARKER_ENV]: diagnosticProbe.marker,
+}
 const harnessReportPath = join(
   smokeOutputDirectory,
   `package-smoke-harness-${process.platform}-${expectedArch}.json`,
@@ -380,49 +464,61 @@ try {
     `--dsh-workbench-smoke-report=${reportPath}`,
     '--dsh-workbench-smoke-phase=setup',
     `--dsh-workbench-smoke-user-data=${userDataPath}`,
-  ], cwd)
+  ], cwd, diagnosticProbeEnvironment, diagnosticProbe.canary)
   assertSmoke(!result.timedOut, `Packaged smoke setup timed out after ${SMOKE_TIMEOUT_MS} ms`)
   assertSmoke(result.code === 0, `Packaged smoke setup exited with ${result.code ?? result.signal}`)
   assertSmoke(result.stdout.includes('DSH_WORKBENCH_PACKAGE_SMOKE_OK'), 'Packaged smoke setup success marker is missing')
+  assertDiagnosticConsoleEvidence(result, diagnosticProbe, 'setup')
 
   result = await runPackagedApp(executable, [
     `--dsh-workbench-smoke-report=${reportPath}`,
     '--dsh-workbench-smoke-phase=verify',
     `--dsh-workbench-smoke-user-data=${userDataPath}`,
-  ], cwd)
+  ], cwd, diagnosticProbeEnvironment, diagnosticProbe.canary)
   assertSmoke(!result.timedOut, `Packaged smoke timed out after ${SMOKE_TIMEOUT_MS} ms`)
   assertSmoke(result.code === 0, `Packaged smoke exited with ${result.code ?? result.signal}`)
   assertSmoke(result.stdout.includes('DSH_WORKBENCH_PACKAGE_SMOKE_OK'), 'Packaged smoke success marker is missing')
+  assertDiagnosticConsoleEvidence(result, diagnosticProbe, 'verify')
 
   const report = JSON.parse(await readFile(reportPath, 'utf8'))
   validateReport(report, {
     executable,
+    diagnosticProbe,
     expectedArch,
     resourcesPath,
     temporaryRoot,
   })
 } catch (error) {
   failure = asError(error)
-  if (result?.stdout) console.error(`Packaged smoke stdout:\n${result.stdout}`)
-  if (result?.stderr) console.error(`Packaged smoke stderr:\n${result.stderr}`)
+  if (result?.stdout) console.error(`Packaged smoke stdout:\n${redactDiagnosticCanary(result.stdout, diagnosticProbe.canary)}`)
+  if (result?.stderr) console.error(`Packaged smoke stderr:\n${redactDiagnosticCanary(result.stderr, diagnosticProbe.canary)}`)
 } finally {
+  const safeResult = sanitizedProcessResult(result, diagnosticProbe.canary)
   const harnessReport = {
     appReportPath: reportPath,
-    error: failure ? { message: failure.message, name: failure.name } : undefined,
+    diagnostics: { outputPipelineMarker: diagnosticProbe.marker },
+    error: failure ? {
+      message: redactDiagnosticCanary(failure.message, diagnosticProbe.canary),
+      name: failure.name,
+    } : undefined,
     platform: process.platform,
     arch: expectedArch,
-    process: result ? {
-      code: result.code,
-      cleanupError: result.cleanupError,
-      signal: result.signal,
-      stderr: result.stderr,
-      stdout: result.stdout,
-      timedOut: result.timedOut,
+    process: safeResult ? {
+      code: safeResult.code,
+      cleanupError: safeResult.cleanupError,
+      diagnosticCanaryExposed: safeResult.forbiddenOutputExposed,
+      signal: safeResult.signal,
+      stderr: safeResult.stderr,
+      stdout: safeResult.stdout,
+      timedOut: safeResult.timedOut,
     } : undefined,
     schemaVersion: 1,
     status: failure ? 'failed' : 'passed',
   }
-  await writeFile(harnessReportPath, `${JSON.stringify(harnessReport, undefined, 2)}\n`, 'utf8')
+  const serializedHarnessReport = `${JSON.stringify(harnessReport, undefined, 2)}\n`
+  assertSmoke(serializedHarnessReport.includes(diagnosticProbe.marker), 'Package smoke harness report omitted benign output evidence')
+  assertSmoke(!serializedHarnessReport.includes(diagnosticProbe.canary), 'Package smoke harness report exposed the diagnostics canary')
+  await writeFile(harnessReportPath, serializedHarnessReport, 'utf8')
   if (temporaryRoot) {
     await rm(temporaryRoot, { force: true, maxRetries: 3, recursive: true, retryDelay: 250 })
   }

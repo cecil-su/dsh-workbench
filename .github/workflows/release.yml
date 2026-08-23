@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - id: linux-x64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             arch: x64
           - id: macos-arm64
             os: macos-15
@@ -48,25 +48,9 @@ jobs:
       - run: pnpm test:integration
       - run: pnpm package:artifacts
       - if: runner.os == 'Linux'
-        name: Configure the packaged Chromium sandbox for smoke testing
+        name: Verify unprivileged user namespaces
         run: |
-          workspace_real="$(realpath -- "$GITHUB_WORKSPACE")"
-          sandbox_source="$workspace_real/dist/artifacts/linux-unpacked/chrome-sandbox"
-          test -f "$sandbox_source"
-          test ! -L "$sandbox_source"
-          test "$(realpath -- "$sandbox_source")" = "$sandbox_source"
-          runner_temp_real="$(realpath -- "$RUNNER_TEMP")"
-          sandbox_directory="$(sudo mktemp -d "$runner_temp_real/dsh-workbench-chrome-sandbox.XXXXXX")"
-          sudo chmod 0755 "$sandbox_directory"
-          sandbox_helper="$sandbox_directory/chrome-sandbox"
-          sudo tee "$sandbox_helper" < "$sandbox_source" > /dev/null
-          test -f "$sandbox_helper"
-          test ! -L "$sandbox_helper"
-          test "$(realpath -- "$sandbox_helper")" = "$sandbox_helper"
-          sudo chown root:root "$sandbox_helper"
-          sudo chmod 4755 "$sandbox_helper"
-          test "$(stat -c '%u:%g:%a' -- "$sandbox_helper")" = "0:0:4755"
-          echo "CHROME_DEVEL_SANDBOX=$sandbox_helper" >> "$GITHUB_ENV"
+          unshare --user --map-root-user true
       - run: pnpm test:package
       - if: success()
         uses: actions/upload-artifact@v4

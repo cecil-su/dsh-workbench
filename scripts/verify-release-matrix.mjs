@@ -387,12 +387,25 @@ function validateHarnessSmoke(
   if (definition.platform !== 'linux') return undefined
 
   const sandbox = requireRecord(value.sandbox, `${label}.sandbox`)
+  assert(
+    sandbox.extractedHelperUnprivilegedVerified === true,
+    `${label}.sandbox.extractedHelperUnprivilegedVerified must be true`,
+  )
   assert(sandbox.helperContentVerified === true, `${label}.sandbox.helperContentVerified must be true`)
-  assert(sandbox.helperModeVerified === true, `${label}.sandbox.helperModeVerified must be true`)
+  assert(
+    sandbox.namespaceSandboxRequested === true,
+    `${label}.sandbox.namespaceSandboxRequested must be true`,
+  )
+  assert(
+    sandbox.rendererSandboxVerified === true,
+    `${label}.sandbox.rendererSandboxVerified must be true`,
+  )
   return {
+    extractedHelperUnprivilegedVerified: true,
     helperContentVerified: true,
-    helperModeVerified: true,
     helperSha256: requireSha256(sandbox.helperSha256, `${label}.sandbox.helperSha256`),
+    namespaceSandboxRequested: true,
+    rendererSandboxVerified: true,
   }
 }
 

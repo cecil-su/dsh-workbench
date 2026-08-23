@@ -106,10 +106,14 @@ uploads `release-qualification.json`. See
 provenance fields, smoke-to-manifest binding, exact platform set, and aggregate
 acceptance rules.
 
-The Linux runner copies the packaged Electron `chrome-sandbox` helper into a
-root-owned temporary directory, configures the copy as mode `4755`, and exposes
-it through `CHROME_DEVEL_SANDBOX` while smoke-testing the extracted ZIP. Before
-launch, the harness requires that helper to be a root-owned regular file and
-requires its SHA-256 digest to match the helper inside the extracted ZIP. The
-aggregate qualification report retains this evidence. This preserves the
-Chromium sandbox during CI; the release workflow must not use `--no-sandbox`.
+The Linux job uses Ubuntu 22.04 so the produced distribution keeps an older
+glibc baseline and Chromium developer builds can use unprivileged user
+namespaces without changing the runner's AppArmor policy. The job proves that
+user namespaces are available, then launches the extracted release ZIP with
+Chromium's setuid fallback disabled. Chromium therefore uses its modern
+user-namespace and seccomp sandbox without granting root ownership or a setuid
+bit to any artifact. The harness verifies that the extracted helper is
+unprivileged and byte-identical to the packaged helper, and the application
+smoke requires the preload process to report `process.sandboxed === true`. The
+aggregate qualification report retains that evidence. The release workflow
+must not use `--no-sandbox`.

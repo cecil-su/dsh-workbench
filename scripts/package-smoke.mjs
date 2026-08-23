@@ -24,6 +24,8 @@ const TASKKILL_TIMEOUT_MS = 10_000
 const DIAGNOSTIC_CANARY_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_CANARY'
 const DIAGNOSTIC_MARKER_ENV = 'DSH_WORKBENCH_PACKAGE_SMOKE_MARKER'
 const UNSAFE_ELECTRON_ENVIRONMENT_KEYS = new Set([
+  'ELECTRON_DISABLE_SANDBOX',
+  'ELECTRON_NO_SANDBOX',
   'ELECTRON_RUN_AS_NODE',
   'NODE_OPTIONS',
   'NODE_PATH',
@@ -68,30 +70,8 @@ async function sha256File(path) {
   return createHash('sha256').update(await readFile(path)).digest('hex')
 }
 
-async function verifyLinuxSandboxHelper(executable) {
+async function verifyLinuxNamespaceSandbox(executable, originalExecutable) {
   if (process.platform !== 'linux') return undefined
-
-  const configuredValue = process.env.CHROME_DEVEL_SANDBOX
-  assertSmoke(
-    typeof configuredValue === 'string' && configuredValue.length > 0,
-    'Linux package smoke requires CHROME_DEVEL_SANDBOX',
-  )
-  assertSmoke(isAbsolute(configuredValue), 'Configured Chromium sandbox path must be absolute')
-  const configuredPath = resolve(configuredValue)
-  const configuredStats = await lstat(configuredPath)
-  assertSmoke(
-    configuredStats.isFile() && !configuredStats.isSymbolicLink(),
-    'Configured Chromium sandbox must be a regular file',
-  )
-  assertSmoke(
-    await realpath(configuredPath) === configuredPath,
-    'Configured Chromium sandbox path must not traverse symbolic links',
-  )
-  assertSmoke(configuredStats.uid === 0, 'Configured Chromium sandbox must be owned by root')
-  assertSmoke(
-    (configuredStats.mode & 0o7777) === 0o4755,
-    'Configured Chromium sandbox must have mode 4755',
-  )
 
   const packagedPath = join(dirname(executable), 'chrome-sandbox')
   const packagedStats = await lstat(packagedPath)
@@ -103,18 +83,39 @@ async function verifyLinuxSandboxHelper(executable) {
     await realpath(packagedPath) === packagedPath,
     'Extracted ZIP Chromium sandbox path must not traverse symbolic links',
   )
-  const [configuredSha256, packagedSha256] = await Promise.all([
-    sha256File(configuredPath),
+  assertSmoke(
+    (packagedStats.mode & 0o4000) === 0,
+    'Extracted ZIP Chromium helper must not retain a setuid bit',
+  )
+  assertSmoke(
+    typeof process.getuid === 'function' && packagedStats.uid === process.getuid(),
+    'Extracted ZIP Chromium helper must remain owned by the smoke user',
+  )
+
+  const originalPath = join(dirname(originalExecutable), 'chrome-sandbox')
+  const originalStats = await lstat(originalPath)
+  assertSmoke(
+    originalStats.isFile() && !originalStats.isSymbolicLink(),
+    'Packaged Chromium sandbox source must be a regular file',
+  )
+  assertSmoke(
+    await realpath(originalPath) === originalPath,
+    'Packaged Chromium sandbox source path must not traverse symbolic links',
+  )
+  const [originalSha256, packagedSha256] = await Promise.all([
+    sha256File(originalPath),
     sha256File(packagedPath),
   ])
   assertSmoke(
-    configuredSha256 === packagedSha256,
-    'Configured Chromium sandbox does not match the extracted ZIP helper',
+    originalSha256 === packagedSha256,
+    'Extracted ZIP Chromium sandbox does not match the packaged helper',
   )
   return Object.freeze({
+    extractedHelperUnprivilegedVerified: true,
     helperContentVerified: true,
-    helperModeVerified: true,
     helperSha256: packagedSha256,
+    namespaceSandboxRequested: true,
+    rendererSandboxVerified: false,
   })
 }
 
@@ -441,6 +442,8 @@ function validateReport(report, context) {
   assertSmoke(!isPathInside(root, diagnosticsUiEntry), 'Packaged Diagnostics UI resolved inside the source checkout')
 }
 
+assertSmoke(process.argv.length === 2, 'Usage: node scripts/package-smoke.mjs')
+
 await mkdir(smokeOutputDirectory, { recursive: true })
 const expectedArch = process.env.DSH_WORKBENCH_EXPECTED_ARCH ?? process.arch
 const diagnosticProbe = Object.freeze({
@@ -509,7 +512,7 @@ try {
 
   const executable = await realpath(installedExecutable)
   const resourcesPath = await realpath(resourcesPathFor(executable))
-  sandboxEvidence = await verifyLinuxSandboxHelper(executable)
+  sandboxEvidence = await verifyLinuxNamespaceSandbox(executable, originalExecutable)
   const cwd = join(temporaryRoot, 'cwd')
   const userDataPath = join(temporaryRoot, 'user-data')
   await Promise.all([
@@ -527,7 +530,11 @@ try {
     writeFile(join(legacyWorkspace, 'package-smoke-workspace-sentinel'), 'first', { mode: 0o600 }),
   ])
 
+  const platformSandboxArguments = process.platform === 'linux'
+    ? ['--disable-setuid-sandbox']
+    : []
   result = await runPackagedApp(executable, [
+    ...platformSandboxArguments,
     `--dsh-workbench-smoke-report=${reportPath}`,
     '--dsh-workbench-smoke-phase=setup',
     `--dsh-workbench-smoke-user-data=${userDataPath}`,
@@ -538,6 +545,7 @@ try {
   assertDiagnosticConsoleEvidence(result, diagnosticProbe, 'setup')
 
   result = await runPackagedApp(executable, [
+    ...platformSandboxArguments,
     `--dsh-workbench-smoke-report=${reportPath}`,
     '--dsh-workbench-smoke-phase=verify',
     `--dsh-workbench-smoke-user-data=${userDataPath}`,
@@ -555,6 +563,12 @@ try {
     resourcesPath,
     temporaryRoot,
   })
+  if (sandboxEvidence) {
+    sandboxEvidence = Object.freeze({
+      ...sandboxEvidence,
+      rendererSandboxVerified: true,
+    })
+  }
 } catch (error) {
   failure = asError(error)
   if (result?.stdout) console.error(`Packaged smoke stdout:\n${redactDiagnosticCanary(result.stdout, diagnosticProbe.canary)}`)

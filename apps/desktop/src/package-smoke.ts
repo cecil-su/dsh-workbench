@@ -398,11 +398,29 @@ async function openSettingsDialog(window: BrowserWindow): Promise<void> {
 
   await waitForRendererCondition(window, `(() => {
     const labels = new Set(["Settings", "设置"])
-    const button = [...document.querySelectorAll("button")]
-      .find((candidate) => labels.has(candidate.innerText.trim()))
+    const newSessionLabels = new Set(["New session", "新建会话"])
+    const buttons = [...document.querySelectorAll("button")]
+    const newSessionButton = buttons.find((candidate) => (
+      newSessionLabels.has(candidate.getAttribute("aria-label"))
+    ))
+    let sidebar = newSessionButton?.parentElement
+    while (sidebar && !sidebar.querySelector('button[aria-haspopup="dialog"][aria-expanded]')) {
+      sidebar = sidebar.parentElement
+    }
+    const button = buttons.find((candidate) => labels.has(candidate.innerText.trim()))
+      ?? sidebar?.querySelector('button[aria-haspopup="dialog"][aria-expanded]')
     if (!button) return false
-    if (button.getAttribute("aria-expanded") !== "true") button.click()
-    return true
+    if (button.getAttribute("aria-expanded") !== "true") {
+      button.click()
+      return false
+    }
+    const dialog = document.querySelector('[role="dialog"][aria-modal="true"]')
+    if (!dialog) return false
+    const navigationLabels = new Set(
+      [...dialog.querySelectorAll("nav button")].map((candidate) => candidate.innerText.trim()),
+    )
+    return ["Profiles", "配置档案"].some((label) => navigationLabels.has(label))
+      && ["Plugins", "插件"].some((label) => navigationLabels.has(label))
   })()`, 'the Settings dialog')
 }
 

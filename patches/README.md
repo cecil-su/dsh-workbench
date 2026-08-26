@@ -40,27 +40,56 @@ Every patch added here must document:
   package verification passes real select, cancel, and abort flows without the
   patch.
 
+## `@deepseek-ai/dsh-sandbox-windows-acl@0.1.1-rc.2`
+
+- Patch: `@deepseek-ai__dsh-sandbox-windows-acl@0.1.1-rc.2.patch`
+- Reason: confined Windows tool calls are launched by the ACL runner through
+  `CreateProcessAsUserW`, beyond the already-hidden subprocess wrapper. Its
+  `STARTUPINFOW` requests redirected standard handles but not
+  `STARTF_USESHOWWINDOW`/`SW_HIDE`, so a child such as `pwsh.exe` can still
+  display a console window. `CREATE_NO_WINDOW` is not usable because the
+  upstream restriction scheme documents that it makes restricted children
+  fail during DLL initialization. The sandbox extension point can replace the
+  whole provider, but it cannot change this private restricted-token spawn
+  without duplicating token construction, ACL grants, and job supervision.
+- Tracking: Workbench issue
+  [#11](https://github.com/cecil-su/dsh-workbench/issues/11). No upstream issue
+  or pull request was available when this patch was introduced.
+- Owner: DSH Workbench maintainers (`cecil-su`).
+- Introduced: 2026-08-24.
+- Protection: `scripts/subprocess-windows-hide-patch.test.mjs` locks the exact
+  installed package version and both restricted-token startup records;
+  `scripts/verify-compatibility.test.mjs` locks the patch declaration and
+  provenance; `scripts/package.mjs` requires the patched implementation in the
+  production stage and final packaged application.
+- Removal condition: delete this patch after the pinned DSH release applies an
+  equivalent non-isolating hidden-window startup hint to restricted Windows
+  children and a packaged confined PowerShell subagent call completes without
+  a visible console window.
+
 ## `@deepseek-ai/dsh-subprocess-local@0.1.1-rc.2`
 
 - Patch: `@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch`
 - Reason: the direct subprocess implementation does not set Node's
-  `windowsHide` spawn option. When the Windows model tool starts `pwsh.exe`
-  from the GUI-hosted DSH runtime, every tool call can therefore create a
-  visible console window. The subprocess service extension point can replace
-  the whole provider, but it cannot change this spawn option without
-  duplicating the upstream process supervision, output collection, and
-  termination implementation.
+  `windowsHide` spawn option, and its `taskkill` helpers are also spawned
+  without that option. When the Windows model tool starts or stops `pwsh.exe`
+  from the GUI-hosted DSH runtime, a tool call can therefore create a visible
+  console window. The subprocess service extension point can replace the whole
+  provider, but it cannot change these spawn options without duplicating the
+  upstream process supervision, output collection, and termination
+  implementation.
 - Tracking: Workbench issue
   [#11](https://github.com/cecil-su/dsh-workbench/issues/11). No upstream issue
   or pull request was available when this patch was introduced.
 - Owner: DSH Workbench maintainers (`cecil-su`).
 - Introduced: 2026-08-23.
 - Protection: `scripts/subprocess-windows-hide-patch.test.mjs` locks the exact
-  installed package version and Win32-only `windowsHide` option;
+  installed package version, Win32-only direct spawn option, and hidden
+  `taskkill` helpers;
   `scripts/verify-compatibility.test.mjs` locks the patch declaration and
   provenance; `scripts/package.mjs` requires the patched implementation in the
   production stage and final packaged application.
 - Removal condition: delete this patch after the pinned DSH release hides
-  direct Windows subprocess console windows equivalently and a packaged
-  Windows model PowerShell tool call completes without a visible console
-  window.
+  direct Windows subprocess and termination-helper console windows equivalently
+  and a packaged Windows model PowerShell tool call completes without a visible
+  console window.

@@ -1,0 +1,40 @@
+diff --git a/lib/types-CNjZgO4h.js b/lib/types-CNjZgO4h.js
+index 630433e140827a5843bdcf57e08328c0c941f546..c57298fdc912b5d03ae0ee03b4cadb645df6b78b 100644
+--- a/lib/types-CNjZgO4h.js
++++ b/lib/types-CNjZgO4h.js
+@@ -773,12 +773,13 @@ function assertPrivateTempDisjoint(writableDirs, tempDir) {
+ //#region lib/types/spawn.js
+ /**
+ * Restricted-process spawning: anonymous pipes for stdio, STARTUPINFOW with
+-* STARTF_USESTDHANDLES, CreateProcessAsUserW under the restricted token, then
++* STARTF_USESTDHANDLES and STARTF_USESHOWWINDOW/SW_HIDE, CreateProcessAsUserW under the restricted token, then
+ * asynchronous pipe draining and exit waiting. Console isolation
+ * (CREATE_NO_WINDOW / CREATE_NEW_CONSOLE) is intentionally absent: under this
+ * restriction scheme hidden-console children die with STATUS_DLL_INIT_FAILED
+ * (0xC0000142) — verified empirically, see win32-abi.ts. Stdio redirection is
+-* pipe-based and unaffected; the child shares the host console.
++* pipe-based and unaffected; the child shares the host console while the show
++* hint keeps its window hidden.
+ * @module @deepseek-ai/dsh-sandbox-windows-acl/spawn
+ */
+ /**
+@@ -853,7 +854,8 @@ function spawnSandboxed(api, token, options) {
+ 	const startupInfo = allocStartupInfo();
+ 	encodeStartupInfo(startupInfo, {
+ 		cb: 104,
+-		dwFlags: 256,
++		dwFlags: 257,
++		wShowWindow: 0,
+ 		hStdInput: stdIn.read,
+ 		hStdOutput: stdOut.write,
+ 		hStdError: stdErr.write
+@@ -991,7 +993,8 @@ function spawnSandboxedInherited(api, token, options) {
+ 	const startupInfo = allocStartupInfo();
+ 	encodeStartupInfo(startupInfo, {
+ 		cb: 104,
+-		dwFlags: 256,
++		dwFlags: 257,
++		wShowWindow: 0,
+ 		hStdInput: stdIn,
+ 		hStdOutput: stdOut,
+ 		hStdError: stdErr

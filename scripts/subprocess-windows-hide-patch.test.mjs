@@ -10,11 +10,21 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshManifest = require.resolve('@deepseek-ai/dsh/package.json', {
   paths: [join(root, 'packages', 'runtime')],
 })
-const subprocessManifest = require.resolve('@deepseek-ai/dsh-subprocess-local/package.json', {
+const dshBaseManifest = require.resolve('@deepseek-ai/dsh-base/package.json', {
   paths: [dirname(dshManifest)],
+})
+const subprocessManifest = require.resolve('@deepseek-ai/dsh-subprocess-local/package.json', {
+  paths: [dirname(dshBaseManifest)],
 })
 const subprocessRoot = dirname(subprocessManifest)
 const implementationPath = join(subprocessRoot, 'lib', 'index.js')
+const sandboxLocalManifest = require.resolve('@deepseek-ai/dsh-sandbox-local/package.json', {
+  paths: [dirname(dshBaseManifest)],
+})
+const sandboxManifest = require.resolve('@deepseek-ai/dsh-sandbox-windows-acl/package.json', {
+  paths: [dirname(sandboxLocalManifest)],
+})
+const sandboxImplementationPath = join(dirname(sandboxManifest), 'lib', 'types-CNjZgO4h.js')
 const runtimeSourcePath = join(root, 'packages', 'runtime', 'src', 'index.ts')
 
 describe('patched local subprocess Windows behavior', () => {
@@ -26,6 +36,29 @@ describe('patched local subprocess Windows behavior', () => {
     assert.match(
       implementation,
       /const child = spawn\(program, args, \{[\s\S]*?windowsHide: platform === "win32",[\s\S]*?detached: platform !== "win32"/u,
+    )
+    assert.equal(
+      [...implementation.matchAll(/spawnSync\("taskkill", \[[\s\S]*?\], \{\s*stdio: "ignore",\s*windowsHide: true\s*\}\);/gu)].length,
+      2,
+    )
+  })
+
+  it('hides restricted-token child console windows without changing console isolation', async () => {
+    const manifest = JSON.parse(await readFile(sandboxManifest, 'utf8'))
+    const implementation = await readFile(sandboxImplementationPath, 'utf8')
+
+    assert.equal(manifest.version, '0.1.1-rc.2')
+    assert.equal(
+      [...implementation.matchAll(/encodeStartupInfo\(startupInfo, \{\s*cb: 104,\s*dwFlags: 257,\s*wShowWindow: 0,/gu)].length,
+      2,
+    )
+    assert.match(
+      implementation,
+      /createProcessAsUserW\(token, null, commandLine, null, null, 1, 0, null,/u,
+    )
+    assert.match(
+      implementation,
+      /createProcessAsUserW\(token, null, commandLine, null, null, 1, 4, null,/u,
     )
   })
 

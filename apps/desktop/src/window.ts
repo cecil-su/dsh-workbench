@@ -31,12 +31,59 @@ function openExternalUrl(url: string, allowedOrigin: string): void {
   })
 }
 
-function configureWindowSecurity(window: BrowserWindow, allowedOrigin: string): void {
+interface ClipboardPermissionState {
+  readonly allowedOrigins: WeakMap<Electron.WebContents, string>
+}
+
+const clipboardPermissions = new WeakMap<Electron.Session, ClipboardPermissionState>()
+
+function registerClipboardPermissions(window: BrowserWindow, allowedOrigin: string): void {
   const dshSession = window.webContents.session
-  dshSession.setPermissionCheckHandler(() => false)
-  dshSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
-  })
+  let state = clipboardPermissions.get(dshSession)
+  if (!state) {
+    const createdState: ClipboardPermissionState = { allowedOrigins: new WeakMap() }
+    state = createdState
+    clipboardPermissions.set(dshSession, createdState)
+    const allowsClipboardWrite = (
+      webContents: Electron.WebContents | null,
+      permission: string,
+      requestingUrl: string | null,
+      isMainFrame: boolean,
+    ): boolean => {
+      if (!webContents || webContents.isDestroyed() || requestingUrl === null) return false
+      const trustedOrigin = createdState.allowedOrigins.get(webContents)
+      return permission === 'clipboard-sanitized-write'
+        && isMainFrame
+        && trustedOrigin !== undefined
+        && isAllowedNavigation(requestingUrl, trustedOrigin)
+    }
+    dshSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+      if (!allowsClipboardWrite(webContents, permission, requestingOrigin, details.isMainFrame)) {
+        return false
+      }
+      const requestingUrl = details.requestingUrl
+      if (requestingUrl === undefined) return true
+      if (typeof requestingUrl !== 'string') return false
+      const trustedOrigin = webContents && createdState.allowedOrigins.get(webContents)
+      return typeof trustedOrigin === 'string' && isAllowedNavigation(requestingUrl, trustedOrigin)
+    })
+    dshSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      callback(allowsClipboardWrite(
+        webContents,
+        permission,
+        details.requestingUrl,
+        details.isMainFrame,
+      ))
+    })
+  }
+
+  const webContents = window.webContents
+  state.allowedOrigins.set(webContents, allowedOrigin)
+  window.once('closed', () => state.allowedOrigins.delete(webContents))
+}
+
+function configureWindowSecurity(window: BrowserWindow, allowedOrigin: string): void {
+  registerClipboardPermissions(window, allowedOrigin)
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalUrl(url, allowedOrigin)

@@ -21,7 +21,9 @@ apps/desktop -> packages/runtime      -> @deepseek-ai/dsh
 
 Upstream packages never import Workbench packages. Product plugins may depend
 on published DSH contracts, but the Electron renderer never receives Node.js
-access.
+access. Renderer permissions remain denied except for sanitized clipboard
+writes from the current main frame at the validated DSH origin; clipboard reads,
+subframes, foreign origins, and stale windows remain denied.
 
 The desktop host resolves first-party plugin entries from its own packaged
 dependencies, writes a concrete Workbench-owned JSON overlay under Electron's

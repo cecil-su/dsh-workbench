@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">DSH Workbench application icon</title>
+  <desc id="desc">A white whale above a compact workbench on a luminous blue rounded tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="142" y1="82" x2="872" y2="930" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5574ff"/>
+      <stop offset="0.48" stop-color="#304ff1"/>
+      <stop offset="1" stop-color="#142fd0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="46%" cy="42%" r="68%">
+      <stop stop-color="#6f86ff" stop-opacity="0.72"/>
+      <stop offset="0.55" stop-color="#304ff1" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#071b9c" stop-opacity="0.5"/>
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="#06146f" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+
+  <rect x="42" y="44" width="940" height="936" rx="218" fill="url(#tile)"/>
+  <rect x="42" y="44" width="940" height="936" rx="218" fill="url(#glow)"/>
+  <rect x="45" y="47" width="934" height="930" rx="215" fill="none" stroke="#7890ff" stroke-opacity="0.45" stroke-width="5"/>
+
+  <g fill="#fff" filter="url(#softShadow)">
+    <path d="M172 530c0-91 69-151 167-154 102-4 171 55 245 99 67 40 124 39 151-10 20-36 14-72-9-105-28-42-25-91 8-134 23 39 57 62 103 67 37 4 68-8 93-35 7 59-11 107-53 139-24 18-56 25-82 45-24 19-25 48-26 83-3 91-55 169-136 194-65 20-126 4-179-31 17 38 48 64 87 78-43 22-93 33-149 30-103-5-183-47-226-119 45 23 99 33 151 17-61-5-112-26-151-61-7-26-8-50-4-73Z"/>
+    <path d="M184 594c48 20 100 33 154 28-40 25-84 27-126 9-17-8-29-21-28-37Z" fill="#304ff1"/>
+    <circle cx="374" cy="560" r="25" fill="#304ff1"/>
+    <circle cx="381" cy="552" r="7"/>
+    <rect x="272" y="742" width="489" height="20" rx="10"/>
+    <rect x="316" y="768" width="42" height="27" rx="7"/>
+    <rect x="675" y="768" width="42" height="27" rx="7"/>
+  </g>
+</svg>

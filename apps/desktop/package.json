@@ -8,6 +8,7 @@
   "type": "module",
   "main": "lib/main.js",
   "files": [
+    "build",
     "lib"
   ],
   "scripts": {

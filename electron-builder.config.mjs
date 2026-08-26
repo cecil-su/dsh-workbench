@@ -17,6 +17,7 @@ const config = {
   electronVersion: '43.4.1',
   executableName: 'dsh-workbench',
   files: [
+    'build/icon.png',
     'lib/**/*',
     'node_modules/**/*',
     'package.json',
@@ -24,10 +25,12 @@ const config = {
   linux: {
     category: 'Development',
     executableName: 'dsh-workbench',
+    icon: 'icon.png',
     target: ['AppImage', 'tar.gz', 'zip'],
   },
   mac: {
     category: 'public.app-category.developer-tools',
+    icon: 'icon.icns',
     identity: null,
     target: ['dmg', 'zip'],
   },
@@ -41,6 +44,7 @@ const config = {
   productName: 'DSH Workbench',
   win: {
     executableName: 'dsh-workbench',
+    icon: 'icon.ico',
     target: ['nsis', 'zip'],
   },
 }

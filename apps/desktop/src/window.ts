@@ -6,6 +6,8 @@ import type { DshRuntimeReady } from '@dsh-workbench/runtime'
 import { isAllowedNavigation, isExternalHttpUrl } from './navigation.js'
 import { DEFAULT_PROFILE_ID } from './profile-store.js'
 
+const WORKBENCH_ICON_PATH = fileURLToPath(new URL('../build/icon.png', import.meta.url))
+
 export const WORKBENCH_WEB_PREFERENCES = Object.freeze({
   contextIsolation: true,
   nodeIntegration: false,
@@ -112,6 +114,7 @@ export function createWorkbenchBrowserWindow(
     show: options.show ?? true,
     title: 'DSH Workbench',
     backgroundColor: '#111318',
+    icon: WORKBENCH_ICON_PATH,
     webPreferences: {
       ...WORKBENCH_WEB_PREFERENCES,
       partition: options.partition,

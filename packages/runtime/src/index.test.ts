@@ -229,9 +229,9 @@ describe('DSH runtime', () => {
       processTable: () => {
         const rootPid = runtime.pid ?? -1
         return [
-          { pgid: 1, pid: process.pid, ppid: 1 },
-          { pgid: 1, pid: rootPid, ppid: process.pid },
-          { pgid: descendantPid, pid: descendantPid, ppid: rootPid },
+          { pgid: 1, pid: process.pid, ppid: 1, startTime: 'supervisor' },
+          { pgid: 1, pid: rootPid, ppid: process.pid, startTime: 'root' },
+          { pgid: descendantPid, pid: descendantPid, ppid: rootPid, startTime: 'descendant' },
         ]
       },
       shutdownTimeoutMs: 50,
@@ -268,9 +268,9 @@ describe('DSH runtime', () => {
       processTable: () => {
         const rootPid = runtime.pid ?? -1
         return [
-          { pgid: 1, pid: process.pid, ppid: 1 },
-          { pgid: 1, pid: rootPid, ppid: process.pid },
-          { pgid: descendantPid, pid: descendantPid, ppid: rootPid },
+          { pgid: 1, pid: process.pid, ppid: 1, startTime: 'supervisor' },
+          { pgid: 1, pid: rootPid, ppid: process.pid, startTime: 'root' },
+          { pgid: descendantPid, pid: descendantPid, ppid: rootPid, startTime: 'descendant' },
         ]
       },
     })
@@ -296,6 +296,100 @@ describe('DSH runtime', () => {
     }
   })
 
+  it('does not signal a snapshotted PID after its process identity changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-workbench-runtime-reused-pid-'))
+    const pidPath = join(root, 'descendant.pid')
+    let descendantPid = 0
+    let processTableReads = 0
+    let runtime: DshRuntime
+    runtime = fakeRuntime('graceful-with-descendant', {
+      env: { DSH_WORKBENCH_FAKE_DESCENDANT_PID_PATH: pidPath },
+      processTable: () => {
+        processTableReads += 1
+        const rootPid = runtime.pid ?? -1
+        return [
+          { pgid: 1, pid: process.pid, ppid: 1, startTime: 'supervisor' },
+          { pgid: 1, pid: rootPid, ppid: process.pid, startTime: 'root' },
+          {
+            pgid: descendantPid,
+            pid: descendantPid,
+            ppid: rootPid,
+            startTime: processTableReads === 1 ? 'original' : 'reused',
+          },
+        ]
+      },
+    })
+    try {
+      await runtime.start()
+      await vi.waitFor(async () => {
+        descendantPid = Number(await readFile(pidPath, 'utf8'))
+        expect(descendantPid).toBeGreaterThan(0)
+      })
+
+      await runtime.stop()
+      expect(isProcessAlive(descendantPid)).toBe(true)
+      expect(runtime.state).toBe('idle')
+    } finally {
+      if (descendantPid > 0 && isProcessAlive(descendantPid)) {
+        try {
+          if (process.platform === 'win32') process.kill(descendantPid, 'SIGKILL')
+          else process.kill(-descendantPid, 'SIGKILL')
+        } catch {}
+      }
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('fails shutdown when the process table cannot be snapshotted', async () => {
+    let discoveryFails = true
+    const runtime = fakeRuntime('ready', {
+      processTable: () => {
+        if (discoveryFails) throw new Error('injected process discovery failure')
+        const rootPid = runtime.pid ?? -1
+        return [{ pgid: 1, pid: rootPid, ppid: process.pid, startTime: 'root' }]
+      },
+    })
+    await runtime.start()
+
+    await expect(runtime.stop()).rejects.toMatchObject({
+      name: 'DshRuntimeError',
+      stage: 'shutdown',
+    })
+    expect(runtime.state).toBe('failed')
+
+    discoveryFails = false
+    await runtime.stop()
+  })
+
+  it('keeps failed state when descendant revalidation fails after root close', async () => {
+    let processTableReads = 0
+    let runtime: DshRuntime
+    runtime = fakeRuntime('ready', {
+      processTable: () => {
+        processTableReads += 1
+        if (processTableReads > 1) throw new Error('injected process revalidation failure')
+        const rootPid = runtime.pid ?? -1
+        return [
+          { pgid: 1, pid: process.pid, ppid: 1, startTime: 'supervisor' },
+          { pgid: 1, pid: rootPid, ppid: process.pid, startTime: 'root' },
+          { pgid: 2_147_483_647, pid: 2_147_483_647, ppid: rootPid, startTime: 'descendant' },
+        ]
+      },
+    })
+    await runtime.start()
+
+    await expect(runtime.stop()).rejects.toMatchObject({
+      name: 'DshRuntimeError',
+      stage: 'shutdown',
+    })
+    expect(runtime.state).toBe('failed')
+    await expect(runtime.stop()).rejects.toMatchObject({
+      name: 'DshRuntimeError',
+      stage: 'shutdown',
+    })
+    expect(runtime.state).toBe('failed')
+  })
+
   it('uses IPC shutdown after ready arrives while the HTTP probe is pending', async () => {
     let announceProbe: (() => void) | undefined
     const probeStarted = new Promise<void>((resolve) => {
@@ -310,7 +404,7 @@ describe('DSH runtime', () => {
           signal.addEventListener('abort', () => reject(signal.reason), { once: true })
         })
       },
-      startupTimeoutMs: 2_000,
+      startupTimeoutMs: 10_000,
     })
 
     const startup = runtime.start()

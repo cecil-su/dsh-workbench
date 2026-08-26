@@ -8,7 +8,7 @@ if (mode === 'hang-with-descendant' || mode === 'graceful-with-descendant') {
     '-e',
     'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)',
   ], {
-    detached: process.platform !== 'win32',
+    detached: true,
     stdio: 'ignore',
   })
   const pidPath = process.env.DSH_WORKBENCH_FAKE_DESCENDANT_PID_PATH

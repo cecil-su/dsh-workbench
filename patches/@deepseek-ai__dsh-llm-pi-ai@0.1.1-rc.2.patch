@@ -1,0 +1,310 @@
+diff --git a/lib/index.js b/lib/index.js
+index b819f847403e2bd76a7c04518da4652562a7a791..b709be141059ea399f94ca1df1f12a9e770a7d93 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1940,6 +1940,226 @@ function authContextFrom(ctx) {
+ 	};
+ }
+ //#endregion
++//#region lib/types/codex-capabilities.js
++const CODEX_PROVIDER_ID = "openai-codex";
++const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
++const CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
++const CODEX_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
++const CODEX_IMAGE_RESPONSE_MAX_BYTES = 32 * 1024 * 1024;
++function codexRecord(value) {
++	return typeof value === "object" && value !== null && !Array.isArray(value);
++}
++async function readCodexResponseBytes(response, maxBytes) {
++	const length = response.headers.get("content-length");
++	if (length !== null && Number(length) > maxBytes) {
++		await response.body?.cancel().catch(() => {});
++		throw new Error(`Codex response exceeds the ${maxBytes}-byte limit`);
++	}
++	const reader = response.body?.getReader();
++	if (!reader) return new Uint8Array();
++	const chunks = [];
++	let totalBytes = 0;
++	try {
++		while (true) {
++			const { done, value } = await reader.read();
++			if (done) break;
++			if (totalBytes + value.byteLength > maxBytes) {
++				await reader.cancel().catch(() => {});
++				throw new Error(`Codex response exceeds the ${maxBytes}-byte limit`);
++			}
++			chunks.push(value);
++			totalBytes += value.byteLength;
++		}
++	} finally {
++		reader.releaseLock();
++	}
++	const bytes = new Uint8Array(totalBytes);
++	let offset = 0;
++	for (const chunk of chunks) {
++		bytes.set(chunk, offset);
++		offset += chunk.byteLength;
++	}
++	return bytes;
++}
++async function readCodexJson(response, maxBytes) {
++	const bytes = await readCodexResponseBytes(response, maxBytes);
++	try {
++		return JSON.parse(new TextDecoder().decode(bytes));
++	} catch (error) {
++		throw new Error("Codex returned invalid JSON", { cause: error });
++	}
++}
++function redactCodexText(value, secrets) {
++	let redacted = value;
++	for (const secret of secrets) {
++		if (secret.length > 0) redacted = redacted.replaceAll(secret, "[REDACTED]");
++	}
++	return redacted;
++}
++function codexError(payload, status, secrets) {
++	let detail;
++	if (codexRecord(payload)) {
++		const error = payload.error;
++		if (typeof error === "string") detail = error;
++		else if (codexRecord(error) && typeof error.message === "string") detail = error.message;
++		else if (typeof payload.message === "string") detail = payload.message;
++	}
++	const safeDetail = detail ? redactCodexText(detail.replace(/[\r\n]+/g, " "), secrets).slice(0, 500) : void 0;
++	return new Error(`Codex capability request failed (HTTP ${status})${safeDetail ? `: ${safeDetail}` : ""}`);
++}
++function codexAccountId(token) {
++	try {
++		const parts = token.split(".");
++		if (parts.length !== 3) throw new Error("invalid token");
++		const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
++		const accountId = payload?.[CODEX_JWT_CLAIM_PATH]?.chatgpt_account_id;
++		if (typeof accountId !== "string" || accountId.length === 0) throw new Error("missing account id");
++		return accountId;
++	} catch {
++		throw new Error("Codex OAuth credential has no usable ChatGPT account ID");
++	}
++}
++function canonicalBase64(value) {
++	if (value.length === 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error("Codex returned invalid base64 image data");
++	const data = Buffer.from(value, "base64");
++	if (data.toString("base64") !== value) throw new Error("Codex returned non-canonical base64 image data");
++	return new Uint8Array(data);
++}
++class PiAiCodexCapabilities {
++	#auth;
++	#resolveProvider;
++	constructor(auth, resolveProvider) {
++		this.#auth = auth;
++		this.#resolveProvider = resolveProvider;
++		this.search = this.search.bind(this);
++		this.generateImage = this.generateImage.bind(this);
++		Object.freeze(this);
++	}
++	#requireProvider() {
++		const provider = this.#resolveProvider();
++		if (provider?.id !== CODEX_PROVIDER_ID) throw new Error("Codex capabilities require a configured openai-codex provider route");
++		return provider;
++	}
++	async #authorization() {
++		const provider = this.#requireProvider();
++		const models = createModels(this.#auth);
++		models.setProvider(provider);
++		const resolved = await models.getAuth(CODEX_PROVIDER_ID);
++		const token = resolved?.auth.apiKey;
++		if (typeof token !== "string" || token.length === 0) throw new Error("Codex capabilities require Sign in with ChatGPT for openai-codex");
++		return {
++			accountId: codexAccountId(token),
++			baseUrl: CODEX_BASE_URL,
++			headers: resolved.auth.headers,
++			provider,
++			token
++		};
++	}
++	async #refreshAfterUnauthorized(provider, failedToken, signal) {
++		const oauth = provider.auth.oauth;
++		if (!oauth) throw new Error("Codex OAuth refresh is unavailable");
++		await this.#auth.credentials.modify(CODEX_PROVIDER_ID, async (current) => {
++			if (current?.type !== "oauth") throw new Error("Codex OAuth credential is unavailable");
++			if (current.access !== failedToken) return void 0;
++			return oauth.refresh(current, signal);
++		});
++	}
++	async #request(path, body, signal, maxResponseBytes, extraHeaders = {}) {
++		for (let attempt = 0; attempt < 2; attempt += 1) {
++			const auth = await this.#authorization();
++			const headers = new Headers(attributionHeaders());
++			for (const [name, value] of Object.entries(auth.headers ?? {})) {
++				if (value === null) headers.delete(name);
++				else headers.set(name, value);
++			}
++			headers.set("accept", "application/json");
++			headers.set("authorization", `Bearer ${auth.token}`);
++			headers.set("chatgpt-account-id", auth.accountId);
++			headers.set("content-type", "application/json");
++			headers.set("originator", "dsh_workbench");
++			for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
++			let response;
++			try {
++				response = await fetch(`${auth.baseUrl}/${path}`, {
++					method: "POST",
++					redirect: "error",
++					headers,
++					body: JSON.stringify(body),
++					signal
++				});
++			} catch (error) {
++				if (signal.aborted) throw new Error("Codex capability request aborted", { cause: signal.reason });
++				throw new Error("Codex capability request failed", { cause: error });
++			}
++			if (response.status === 401 && attempt === 0) {
++				await response.body?.cancel().catch(() => {});
++				await this.#refreshAfterUnauthorized(auth.provider, auth.token, signal);
++				continue;
++			}
++			const payload = await readCodexJson(response, maxResponseBytes);
++			const secrets = [auth.token, auth.accountId];
++			if (!response.ok) throw codexError(payload, response.status, secrets);
++			return { payload, secrets };
++		}
++		throw new Error("Codex capability authentication failed after refresh");
++	}
++	async search(options) {
++		const queries = [...new Set(options.queries.map((query) => query.trim()))];
++		if (queries.length === 0 || queries.some((query) => query.length === 0)) throw new Error("Codex search requires non-empty queries");
++		if (!Number.isSafeInteger(options.maxResults) || options.maxResults < 1) throw new Error("Codex search maxResults must be a positive safe integer");
++		const { payload, secrets } = await this.#request("alpha/search", {
++			id: crypto.randomUUID(),
++			model: options.model,
++			input: `Search the web for these queries and return relevant findings with citations:\n${queries.join("\n")}`,
++			commands: { search_query: queries.map((q) => ({ q })) },
++			settings: {
++				search_context_size: options.contextSize,
++				allowed_callers: ["direct"]
++			},
++			max_output_tokens: 1500
++		}, options.signal, CODEX_SEARCH_RESPONSE_MAX_BYTES);
++		if (!codexRecord(payload) || typeof payload.output !== "string" || payload.results !== void 0 && !Array.isArray(payload.results)) throw new Error("Codex returned an invalid search payload");
++		const sources = [];
++		const seen = new Set();
++		let omittedSensitiveSource = false;
++		for (const result of payload.results ?? []) {
++			if (!codexRecord(result) || typeof result.url !== "string" || result.url.length === 0 || seen.has(result.url)) continue;
++			if (secrets.some((secret) => secret.length > 0 && result.url.includes(secret))) {
++				omittedSensitiveSource = true;
++				continue;
++			}
++			seen.add(result.url);
++			sources.push({
++				url: result.url,
++				...typeof result.title === "string" && result.title.length > 0 ? { title: redactCodexText(result.title, secrets) } : {}
++			});
++		}
++		return {
++			...payload.output.length > 0 ? { content: redactCodexText(payload.output, secrets) } : {},
++			sources: sources.slice(0, options.maxResults),
++			truncated: omittedSensitiveSource || sources.length > options.maxResults
++		};
++	}
++	async generateImage(options) {
++		const { payload, secrets } = await this.#request("images/generations", {
++			model: options.model,
++			prompt: options.prompt,
++			size: options.size,
++			quality: options.quality,
++			background: options.background,
++			n: 1
++		}, options.signal, CODEX_IMAGE_RESPONSE_MAX_BYTES, {
++			"x-codex-image-turn-id": crypto.randomUUID()
++		});
++		if (!codexRecord(payload) || !Array.isArray(payload.data) || !codexRecord(payload.data[0]) || typeof payload.data[0].b64_json !== "string") throw new Error("Codex returned an invalid image payload");
++		return {
++			data: canonicalBase64(payload.data[0].b64_json),
++			mediaType: "image/png",
++			...typeof payload.data[0].revised_prompt === "string" && payload.data[0].revised_prompt.length > 0 ? { revisedPrompt: redactCodexText(payload.data[0].revised_prompt, secrets) } : {}
++		};
++	}
++}
++//#endregion
+ //#region lib/types/discovery.js
+ /**
+ * Answering "which models can this provider serve?" for the configuration
+@@ -2417,6 +2637,7 @@ function apply(ctx, config) {
+ 		credentials: credentialStoreFrom(ctx),
+ 		authContext: authContextFrom(ctx)
+ 	};
++	ctx.provide("piAiCodex", new PiAiCodexCapabilities(auth, () => profiles().get(CODEX_PROVIDER_ID)?.piProvider));
+ 	const adapter = new PiAiAdapter({
+ 		profiles,
+ 		resolveApiKey,
+@@ -2491,4 +2712,4 @@ function apply(ctx, config) {
+ 	});
+ }
+ //#endregion
+-export { Config, PiAiAdapter, apply, inject, name, recordKeyFor, supportedProtocols };
++export { Config, PiAiAdapter, PiAiCodexCapabilities, apply, inject, name, recordKeyFor, supportedProtocols };
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+index c5c05b80fedf78b6ceebcd39682f3e7e8b843426..74f9e63623499467e9c8c22b54c99d9a00701c47 100644
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -55,6 +55,8 @@
+  * @module @deepseek-ai/dsh-llm-pi-ai
+  */
+ import type { Context } from '@deepseek-ai/cordis';
++import type { Provider } from '@earendil-works/pi-ai';
++import type { PiAiAuthInjection } from './adapter.ts';
+ import { Config } from './config.ts';
+ export { PiAiAdapter } from './adapter.ts';
+ export type { PiAiAdapterOptions } from './adapter.ts';
+@@ -62,6 +64,51 @@ export { Config } from './config.ts';
+ export type { PiAiCompatProfile, PiAiModality, PiAiModelOverride, PiAiModelProfile, PiAiProviderProfile, PiAiReasoningEfforts, PiAiThinkingFormat, ResolvedPiAiProviderProfile, } from './config.ts';
+ export { recordKeyFor } from './auth.ts';
+ export { supportedProtocols } from './provider.ts';
++export type PiAiCodexSearchContextSize = 'low' | 'medium' | 'high';
++export interface PiAiCodexSearchOptions {
++    queries: readonly string[];
++    model: string;
++    contextSize: PiAiCodexSearchContextSize;
++    maxResults: number;
++    signal: AbortSignal;
++}
++export interface PiAiCodexSearchSource {
++    url: string;
++    title?: string;
++}
++export interface PiAiCodexSearchResult {
++    content?: string;
++    sources: PiAiCodexSearchSource[];
++    truncated: boolean;
++}
++export interface PiAiCodexImageOptions {
++    prompt: string;
++    model: string;
++    size: 'auto' | '1024x1024' | '1536x1024' | '1024x1536';
++    quality: 'auto' | 'low' | 'medium' | 'high';
++    background: 'auto' | 'opaque' | 'transparent';
++    signal: AbortSignal;
++}
++export interface PiAiCodexGeneratedImage {
++    data: Uint8Array;
++    mediaType: 'image/png';
++    revisedPrompt?: string;
++}
++/**
++ * Provider-owned ChatGPT Codex operations. OAuth grant interpretation, locked
++ * refresh, account routing, and private endpoint compatibility remain inside
++ * the provider; consumers receive results and never credentials.
++ */
++export declare class PiAiCodexCapabilities {
++    constructor(auth: PiAiAuthInjection, resolveProvider: () => Provider | undefined);
++    search(options: PiAiCodexSearchOptions): Promise<PiAiCodexSearchResult>;
++    generateImage(options: PiAiCodexImageOptions): Promise<PiAiCodexGeneratedImage>;
++}
++declare module '@deepseek-ai/cordis' {
++    interface Context {
++        piAiCodex: PiAiCodexCapabilities;
++    }
++}
+ export declare const name = "llm-pi-ai";
+ export declare const inject: string[];
+ /** Register one generic pi-ai adapter for all configured provider routes. */

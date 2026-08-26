@@ -82,6 +82,7 @@ describe('desktop DSH lifecycle', () => {
     expect(html).toContain('@dsh-workbench/desktop-core')
     expect(html).toContain('@dsh-workbench/oauth-ui')
     expect(html).toContain('@dsh-workbench/diagnostics-ui')
+    expect(html).not.toContain('@dsh-workbench/gpt-tools')
 
     const authorizationResponse = await fetch(
       new URL('/workbench/authorization', ready.url),

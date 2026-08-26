@@ -23,7 +23,8 @@
     },
     {
       "entryId": "dsh-workbench-gpt-tools",
-      "packageName": "@dsh-workbench/gpt-tools"
+      "packageName": "@dsh-workbench/gpt-tools",
+      "enabledByDefault": false
     }
   ]
 }

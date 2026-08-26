@@ -23,7 +23,9 @@ const requiredFixturePaths = [
   'pnpm-lock.yaml',
   'electron-builder.config.mjs',
   'patches/README.md',
+  'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch',
   'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch',
+  'patches/@deepseek-ai__dsh-sandbox-windows-acl@0.1.1-rc.2.patch',
   'patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch',
   'upstream/compatibility.json',
   'upstream/version.json',
@@ -37,6 +39,9 @@ const requiredFixturePaths = [
   'plugins/gpt-tools/package.json',
   'plugins/oauth-ui/package.json',
   'scripts/package.mjs',
+  'scripts/patched-runtime-verification.mjs',
+  'scripts/patched-runtime-verification.test.mjs',
+  'scripts/codex-capabilities-patch.test.mjs',
   'scripts/directory-picker-patch.test.mjs',
   'scripts/subprocess-windows-hide-patch.test.mjs',
 ]
@@ -68,6 +73,19 @@ async function replaceExactlyOnce(root, relativePath, before, afterValue) {
   const source = await readFile(path, 'utf8')
   assert.equal(source.split(before).length - 1, 1, `fixture replacement must be unique: ${before}`)
   await writeFile(path, source.replace(before, afterValue))
+}
+
+async function replaceInPatchSection(root, patchKey, before, afterValue) {
+  const path = join(root, 'patches/README.md')
+  const source = await readFile(path, 'utf8')
+  const heading = `## \`${patchKey}\``
+  const start = source.indexOf(heading)
+  assert.notEqual(start, -1, `fixture patch section must exist: ${patchKey}`)
+  const next = source.indexOf('\n## ', start + heading.length)
+  const end = next === -1 ? source.length : next
+  const section = source.slice(start, end)
+  assert.equal(section.split(before).length - 1, 1, `fixture section replacement must be unique: ${before}`)
+  await writeFile(path, source.slice(0, start) + section.replace(before, afterValue) + source.slice(end))
 }
 
 async function expectFailure(root, pattern) {
@@ -211,6 +229,152 @@ describe('compatibility verifier', () => {
     await expectFailure(root, /must hide direct Win32 subprocess console windows/u)
   })
 
+  it('rejects removal of the exact pi-ai Codex capability patch declaration', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'pnpm-workspace.yaml',
+      "  '@deepseek-ai/dsh-llm-pi-ai@0.1.1-rc.2': patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch\n",
+      '',
+    )
+
+    await expectFailure(root, /must patch @deepseek-ai\/dsh-llm-pi-ai@0\.1\.1-rc\.2/u)
+  })
+
+  it('rejects a pi-ai patch that derives OAuth capability targets from provider configuration', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch',
+      'baseUrl: CODEX_BASE_URL',
+      'baseUrl: provider.baseUrl',
+    )
+
+    await expectFailure(root, /fixed token-free Codex operations/u)
+  })
+
+  it('rejects a pi-ai patch without the fixed Codex search operation', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch',
+      'this.#request("alpha/search"',
+      'this.#request("alpha/search-missing"',
+    )
+
+    await expectFailure(root, /fixed token-free Codex operations/u)
+  })
+
+  it('rejects a pi-ai Codex capability that inherits a runtime context', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch',
+      'class PiAiCodexCapabilities {\n+\t#auth;',
+      'class PiAiCodexCapabilities extends Service {\n+\t#auth;',
+    )
+
+    await expectFailure(root, /fixed token-free Codex operations/u)
+  })
+
+  it('rejects omission of the ChatGPT account ID from response redaction', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch',
+      'const secrets = [auth.token, auth.accountId];',
+      'const secrets = [auth.token];',
+    )
+
+    await expectFailure(root, /fixed token-free Codex operations/u)
+  })
+
+  it('rejects patch metadata borrowed from another README section', async () => {
+    const root = await createFixture()
+    await replaceInPatchSection(
+      root,
+      '@deepseek-ai/dsh-llm-pi-ai@0.1.1-rc.2',
+      '- Owner: DSH Workbench maintainers (`cecil-su`).',
+      '- Maintainer: DSH Workbench maintainers (`cecil-su`).',
+    )
+
+    await expectFailure(root, /pi-ai Codex capability patch documentation/u)
+  })
+
+  it('stops patch metadata sections at CommonMark-indented level-one and level-two headings', async () => {
+    for (const heading of [' # Borrowed metadata', '   ## Borrowed metadata']) {
+      const root = await createFixture()
+      await replaceInPatchSection(
+        root,
+        '@deepseek-ai/dsh-llm-pi-ai@0.1.1-rc.2',
+        '- Owner: DSH Workbench maintainers (`cecil-su`).',
+        `${heading}\n- Owner: DSH Workbench maintainers (\`cecil-su\`).`,
+      )
+
+      await expectFailure(root, /pi-ai Codex capability patch documentation/u)
+    }
+  })
+
+  it('rejects omission of pi-ai Codex capabilities from stage verification', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'scripts/package.mjs',
+      '    access(piAiCodexCapabilities),\n',
+      '',
+    )
+
+    await expectFailure(root, /must require staged dsh-llm-pi-ai/u)
+  })
+
+  it('rejects omission of runtime patch-feature verification', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'scripts/package.mjs',
+      '  await verifyPatchedRuntimeFiles(stageDir)\n',
+      '',
+    )
+
+    await expectFailure(root, /must inspect patch features in the production stage and final packaged app/u)
+  })
+
+  it('rejects removal of the exact sandbox Windows ACL patch declaration', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'pnpm-workspace.yaml',
+      "  '@deepseek-ai/dsh-sandbox-windows-acl@0.1.1-rc.2': patches/@deepseek-ai__dsh-sandbox-windows-acl@0.1.1-rc.2.patch\n",
+      '',
+    )
+
+    await expectFailure(root, /must patch @deepseek-ai\/dsh-sandbox-windows-acl@0\.1\.1-rc\.2/u)
+  })
+
+  it('rejects a sandbox Windows ACL patch that leaves a restricted child visible', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'patches/@deepseek-ai__dsh-sandbox-windows-acl@0.1.1-rc.2.patch',
+      '@@ -853,7 +854,8 @@ function spawnSandboxed(api, token, options) {\n \tconst startupInfo = allocStartupInfo();\n \tencodeStartupInfo(startupInfo, {\n \t\tcb: 104,\n-\t\tdwFlags: 256,\n+\t\tdwFlags: 257,',
+      '@@ -853,7 +854,8 @@ function spawnSandboxed(api, token, options) {\n \tconst startupInfo = allocStartupInfo();\n \tencodeStartupInfo(startupInfo, {\n \t\tcb: 104,\n-\t\tdwFlags: 256,\n+\t\tdwFlags: 256,',
+    )
+
+    await expectFailure(root, /must hide both restricted-token child process paths/u)
+  })
+
+  it('validates sandbox patch documentation inside its own README section', async () => {
+    const root = await createFixture()
+    await replaceInPatchSection(
+      root,
+      '@deepseek-ai/dsh-sandbox-windows-acl@0.1.1-rc.2',
+      '- Removal condition:',
+      '- Retirement condition:',
+    )
+
+    await expectFailure(root, /sandbox Windows ACL patch documentation/u)
+  })
+
   it('rejects omission of subprocess-local from stage verification', async () => {
     const root = await createFixture()
     await replaceExactlyOnce(
@@ -221,6 +385,18 @@ describe('compatibility verifier', () => {
     )
 
     await expectFailure(root, /must require staged subprocess-local/u)
+  })
+
+  it('rejects omission of sandbox-windows-acl from stage verification', async () => {
+    const root = await createFixture()
+    await replaceExactlyOnce(
+      root,
+      'scripts/package.mjs',
+      '    access(sandboxWindowsAcl),\n',
+      '',
+    )
+
+    await expectFailure(root, /must require staged sandbox-windows-acl/u)
   })
 
   it('rejects a ranged DSH dependency in any workspace package manifest', async () => {
@@ -237,8 +413,8 @@ describe('compatibility verifier', () => {
     await replaceExactlyOnce(
       root,
       'pnpm-lock.yaml',
-      'version: 0.1.1-rc.2(9344e849add969babd52d6b5331335e0)',
-      'version: 0.1.1-rc.1(9344e849add969babd52d6b5331335e0)',
+      'version: 0.1.1-rc.2(9e5083aa0287631f52a6ca114653706c)',
+      'version: 0.1.1-rc.1(9e5083aa0287631f52a6ca114653706c)',
     )
 
     await expectFailure(root, /importer packages\/runtime must resolve @deepseek-ai\/dsh/u)
@@ -294,6 +470,15 @@ describe('compatibility verifier', () => {
     const metadataRoot = await createFixture()
     await editJson(metadataRoot, 'upstream/compatibility.json', (value) => { value.firstPartyPlugins.pop() })
     await expectFailure(metadataRoot, /exactly four first-party plugins/u)
+
+    const activationRoot = await createFixture()
+    await editJson(activationRoot, 'upstream/compatibility.json', (value) => {
+      const gptTools = value.firstPartyPlugins.find((plugin) => (
+        plugin.entryId === 'dsh-workbench-gpt-tools'
+      ))
+      gptTools.enabledByDefault = true
+    })
+    await expectFailure(activationRoot, /expected default activation/u)
 
     const overlayRoot = await createFixture()
     await replaceExactlyOnce(overlayRoot, 'apps/desktop/src/contribution.ts', "id: 'dsh-workbench-oauth-ui'", "id: 'dsh-workbench-oauth-ui-missing'")

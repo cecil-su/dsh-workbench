@@ -12,6 +12,44 @@ Every patch added here must document:
 - test that protects the behavior;
 - objective condition for deleting the patch.
 
+## `@deepseek-ai/dsh-llm-pi-ai@0.1.1-rc.2`
+
+- Patch: `@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch`
+- Reason: the provider owns the opaque `llm-pi-ai/openai-codex` OAuth grant and
+  serialized refresh lifecycle, but the public DSH LLM seam exposes only model
+  streaming and metadata. A tool plugin therefore cannot perform authenticated
+  standalone Codex search or image generation without parsing another plugin's
+  grant or receiving its bearer token. This patch adds a frozen capability with
+  only fixed `search()` and `generateImage()` Host operations. It does not
+  inherit Cordis `Service`, retain a Context, expose a token getter, or provide
+  arbitrary authenticated fetch. Capability requests are pinned to the official
+  `https://chatgpt.com/backend-api/codex` base URL; provider/profile Base URL
+  overrides are intentionally ignored for OAuth-bearing capability traffic.
+  Provider-controlled text is scrubbed of both the access token and ChatGPT
+  account ID before crossing the capability boundary. Cordis Host plugins are
+  trusted same-process code rather than a credential sandbox; the protected
+  boundary is from provider internals to this tool plugin, agent/session output,
+  and Electron Renderer.
+- Tracking: upstream DeepSeek Harness discussion
+  [#208](https://github.com/deepseek-ai/deepseek-harness/discussions/208)
+  establishes the current `llm-pi-ai` OAuth ownership boundary. No dedicated
+  upstream capability issue or pull request was available when this patch was
+  introduced.
+- Owner: DSH Workbench maintainers (`cecil-su`).
+- Introduced: 2026-08-24.
+- Protection: `scripts/codex-capabilities-patch.test.mjs` locks the exact package
+  version, fixed official origin, endpoint operations, locked refresh path, and
+  token-free type surface; `plugins/gpt-tools/src/index.test.ts` proves the
+  runtime capability is frozen, retains no Context or credential/request escape
+  members, and never sends a capability request to a custom provider Base URL;
+  it then executes 401 refresh, search, image attachment, response bounds, and
+  access-token/account-ID redaction. Compatibility and package verification
+  require the patch in development and production.
+- Removal condition: delete this patch after a pinned DSH release provides an
+  equivalent provider-owned, token-free Codex search and image capability seam,
+  then migrate `@dsh-workbench/gpt-tools` to that public API and pass the same
+  OAuth, packaged-runtime, and redaction tests.
+
 ## `@deepseek-ai/dsh-host-directory-picker-native@0.1.1-rc.2`
 
 - Patch: `@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch`

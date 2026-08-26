@@ -9,8 +9,12 @@ import {
 
 const rootFromScript = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DSH_PACKAGE_PREFIX = '@deepseek-ai/dsh'
+const CODEX_CAPABILITIES_PATCH_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai'
+const CODEX_CAPABILITIES_PATCH_PATH = 'patches/@deepseek-ai__dsh-llm-pi-ai@0.1.1-rc.2.patch'
 const DIRECTORY_PICKER_PATCH_PACKAGE = '@deepseek-ai/dsh-host-directory-picker-native'
 const DIRECTORY_PICKER_PATCH_PATH = 'patches/@deepseek-ai__dsh-host-directory-picker-native@0.1.1-rc.2.patch'
+const SANDBOX_WINDOWS_ACL_PATCH_PACKAGE = '@deepseek-ai/dsh-sandbox-windows-acl'
+const SANDBOX_WINDOWS_ACL_PATCH_PATH = 'patches/@deepseek-ai__dsh-sandbox-windows-acl@0.1.1-rc.2.patch'
 const SUBPROCESS_PATCH_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
 const SUBPROCESS_PATCH_PATH = 'patches/@deepseek-ai__dsh-subprocess-local@0.1.1-rc.2.patch'
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
@@ -30,6 +34,7 @@ const EXPECTED_FIRST_PARTY_PLUGINS = Object.freeze([
   Object.freeze({
     entryId: 'dsh-workbench-gpt-tools',
     packageName: '@dsh-workbench/gpt-tools',
+    enabledByDefault: false,
   }),
 ])
 const DEPENDENCY_GROUPS = Object.freeze([
@@ -272,6 +277,16 @@ function quoted(value) {
   return `["']${escapeRegex(value)}["']`
 }
 
+function patchDocumentationSection(documentation, patchKey) {
+  const lines = documentation.replaceAll('\r\n', '\n').split('\n')
+  const start = lines.findIndex((line) => line.trim() === `## \`${patchKey}\``)
+  if (start === -1) return ''
+  const next = lines.findIndex((line, index) => (
+    index > start && /^ {0,3}#{1,2}(?:[ \t]+|$)/u.test(line)
+  ))
+  return lines.slice(start, next === -1 ? undefined : next).join('\n')
+}
+
 function verifyCompatibilityMetadata(compatibility, issues) {
   record(issues, isObject(compatibility), 'upstream/compatibility.json must contain an object')
   if (!isObject(compatibility)) return
@@ -294,15 +309,18 @@ function verifyCompatibilityMetadata(compatibility, issues) {
   const identities = new Set()
   for (const expected of EXPECTED_FIRST_PARTY_PLUGINS) {
     const matches = plugins.filter((plugin) => (
-      plugin?.entryId === expected.entryId && plugin?.packageName === expected.packageName
+      plugin?.entryId === expected.entryId
+      && plugin?.packageName === expected.packageName
+      && plugin?.enabledByDefault === expected.enabledByDefault
     ))
-    record(issues, matches.length === 1, `compatibility must declare ${expected.entryId} as ${expected.packageName} exactly once`)
+    record(issues, matches.length === 1, `compatibility must declare ${expected.entryId} as ${expected.packageName} with the expected default activation exactly once`)
   }
   for (const plugin of plugins) {
     record(issues, isObject(plugin), 'compatibility firstPartyPlugins entries must be objects')
     if (!isObject(plugin)) continue
     record(issues, typeof plugin.entryId === 'string' && plugin.entryId !== '', 'compatibility first-party plugin entryId must be a non-empty string')
     record(issues, typeof plugin.packageName === 'string' && plugin.packageName !== '', 'compatibility first-party plugin packageName must be a non-empty string')
+    record(issues, plugin.enabledByDefault === undefined || typeof plugin.enabledByDefault === 'boolean', 'compatibility first-party plugin enabledByDefault must be a boolean when present')
     const identity = `${plugin?.entryId}\0${plugin?.packageName}`
     record(issues, !identities.has(identity), `compatibility contains duplicate first-party plugin ${String(plugin?.entryId)}`)
     identities.add(identity)
@@ -443,8 +461,8 @@ function verifyLockToolchainResolutions(lock, versions, issues) {
 }
 
 function verifyOverlay(source, plugins, issues) {
-  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
-  const argumentNames = ['entry', 'oauthEntry', 'diagnosticsEntry', 'gptToolsEntry']
+  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
+  const argumentNames = ['entry', 'oauthEntry', 'diagnosticsEntry']
   for (const [index, plugin] of plugins.entries()) {
     const match = source.match(new RegExp(
       `\\{\\s*id:\\s*${quoted(plugin.entryId)}\\s*,\\s*name:\\s*([^,}\\n]+)`,
@@ -491,6 +509,7 @@ function verifyDirectoryPickerPatch({
   workspace,
 }, issues) {
   const patchKey = `${DIRECTORY_PICKER_PATCH_PACKAGE}@${dshVersion}`
+  const patchSection = patchDocumentationSection(patchDocumentation, patchKey)
   record(
     issues,
     workspace.patchedDependencies?.[patchKey] === DIRECTORY_PICKER_PATCH_PATH,
@@ -538,13 +557,13 @@ function verifyDirectoryPickerPatch({
   )
   record(
     issues,
-    patchDocumentation.includes(`\`${patchKey}\``)
-      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/8')
-      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/10')
-      && patchDocumentation.includes('Owner:')
-      && patchDocumentation.includes('Introduced: 2026-08-23')
-      && patchDocumentation.includes('Removal condition:')
-      && patchDocumentation.includes('scripts/directory-picker-patch.test.mjs'),
+    patchSection.includes(`\`${patchKey}\``)
+      && patchSection.includes('https://github.com/cecil-su/dsh-workbench/issues/8')
+      && patchSection.includes('https://github.com/cecil-su/dsh-workbench/issues/10')
+      && patchSection.includes('Owner:')
+      && patchSection.includes('Introduced: 2026-08-23')
+      && patchSection.includes('Removal condition:')
+      && patchSection.includes('scripts/directory-picker-patch.test.mjs'),
     'directory-picker patch documentation must record issue, owner, introduction, protection, and removal condition',
   )
   record(
@@ -586,7 +605,7 @@ function verifyDirectoryPickerPatch({
   }
 }
 
-function verifySubprocessPatch({
+function verifyCodexCapabilitiesPatch({
   dshVersion,
   lock,
   packageVerifierSource,
@@ -596,7 +615,115 @@ function verifySubprocessPatch({
   testSource,
   workspace,
 }, issues) {
+  const patchKey = `${CODEX_CAPABILITIES_PATCH_PACKAGE}@${dshVersion}`
+  const patchSection = patchDocumentationSection(patchDocumentation, patchKey)
+  record(
+    issues,
+    workspace.patchedDependencies?.[patchKey] === CODEX_CAPABILITIES_PATCH_PATH,
+    `pnpm workspace must patch ${patchKey} from ${CODEX_CAPABILITIES_PATCH_PATH}`,
+  )
+  const patchHash = lock.patchedDependencies?.[patchKey]
+  record(
+    issues,
+    typeof patchHash === 'string' && /^[a-f0-9]{64}$/u.test(patchHash),
+    `pnpm lock must record a SHA-256 patch hash for ${patchKey}`,
+  )
+  const snapshotKeys = isObject(lock.snapshots)
+    ? Object.keys(lock.snapshots).filter((key) => key.startsWith(`${patchKey}(`))
+    : []
+  record(issues, snapshotKeys.length === 1, `pnpm lock must contain exactly one patched ${patchKey} snapshot`)
+  if (typeof patchHash === 'string') {
+    for (const key of snapshotKeys) {
+      record(
+        issues,
+        key.includes(`patch_hash=${patchHash}`),
+        `pnpm lock ${patchKey} snapshot must use its declared patch hash`,
+      )
+    }
+  }
+  record(
+    issues,
+    patchSource.includes('const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";')
+      && patchSource.includes('class PiAiCodexCapabilities {')
+      && !patchSource.includes('class PiAiCodexCapabilities extends Service')
+      && !patchSource.includes('constructor(ctx, auth, resolveProvider)')
+      && patchSource.includes('Object.freeze(this)')
+      && patchSource.includes('ctx.provide("piAiCodex", new PiAiCodexCapabilities(auth,')
+      && patchSource.includes('this.#request("alpha/search"')
+      && patchSource.includes('this.#request("images/generations"')
+      && patchSource.includes('this.#auth.credentials.modify(CODEX_PROVIDER_ID')
+      && patchSource.includes('response.status === 401 && attempt === 0')
+      && patchSource.includes('baseUrl: CODEX_BASE_URL')
+      && patchSource.includes('const secrets = [auth.token, auth.accountId]')
+      && patchSource.includes('redactCodexText(payload.output, secrets)')
+      && patchSource.includes('redactCodexText(payload.data[0].revised_prompt, secrets)')
+      && patchSource.includes('piAiCodex: PiAiCodexCapabilities')
+      && !/this\.(?:auth|authorization|credentials|ctx|refreshAfterUnauthorized|request|requireProvider|resolveProvider|token)\b|codexBaseUrl\(|getAccessToken|authenticatedFetch/u.test(patchSource),
+    'pi-ai patch must expose fixed token-free Codex operations through a frozen facade with text redaction and locked 401 refresh',
+  )
+  record(
+    issues,
+    patchSection.includes(`\`${patchKey}\``)
+      && patchSection.includes('https://github.com/deepseek-ai/deepseek-harness/discussions/208')
+      && patchSection.includes('Owner:')
+      && patchSection.includes('Introduced: 2026-08-24')
+      && patchSection.includes('Removal condition:')
+      && patchSection.includes('scripts/codex-capabilities-patch.test.mjs'),
+    'pi-ai Codex capability patch documentation must record tracking, owner, introduction, protection, and removal condition',
+  )
+  record(
+    issues,
+    rootPackage.scripts?.['test:scripts']?.split('scripts/codex-capabilities-patch.test.mjs').length === 2
+      && testSource.includes("@deepseek-ai/dsh-llm-pi-ai/package.json")
+      && testSource.includes("assert.equal(manifest.version, '0.1.1-rc.2')")
+      && testSource.includes('CODEX_BASE_URL')
+      && testSource.includes('chatgpt\\.com\\/backend-api\\/codex')
+      && testSource.includes('assert.doesNotMatch(types, /accessToken|getAccessToken|authenticatedFetch/u)'),
+    'pi-ai Codex capability patch regression test must cover the exact package and token-free type surface',
+  )
+  const stageAssignment = packageVerifierSource.match(new RegExp(
+    `const\\s+(\\w+)\\s*=\\s*join\\(\\s*stageDir\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-llm-pi-ai')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('index.js')}\\s*,?\\s*\\)`,
+    'u',
+  ))
+  record(issues, Boolean(stageAssignment), 'package verifier must resolve dsh-llm-pi-ai in the production stage')
+  if (stageAssignment) {
+    record(
+      issues,
+      new RegExp(`access\\(\\s*${escapeRegex(stageAssignment[1])}\\s*\\)`, 'u').test(packageVerifierSource),
+      'package verifier must require staged dsh-llm-pi-ai',
+    )
+  }
+  record(
+    issues,
+    new RegExp(
+      `access\\(\\s*join\\(\\s*packagedAppPath\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-llm-pi-ai')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('index.js')}\\s*,?\\s*\\)\\s*\\)`,
+      'u',
+    ).test(packageVerifierSource),
+    'package verifier must require packaged dsh-llm-pi-ai',
+  )
+  record(
+    issues,
+    packageVerifierSource.includes("from './patched-runtime-verification.mjs'")
+      && packageVerifierSource.includes('verifyPatchedRuntimeFiles(stageDir)')
+      && packageVerifierSource.includes('verifyPatchedRuntimeFiles(packagedAppPath)')
+      && rootPackage.scripts?.['test:scripts']?.includes('scripts/patched-runtime-verification.test.mjs'),
+    'package verifier must inspect patch features in the production stage and final packaged app',
+  )
+}
+
+function verifySubprocessPatch({
+  dshVersion,
+  lock,
+  packageVerifierSource,
+  patchDocumentation,
+  patchSource,
+  sandboxPatchSource,
+  rootPackage,
+  testSource,
+  workspace,
+}, issues) {
   const patchKey = `${SUBPROCESS_PATCH_PACKAGE}@${dshVersion}`
+  const patchSection = patchDocumentationSection(patchDocumentation, patchKey)
   record(
     issues,
     workspace.patchedDependencies?.[patchKey] === SUBPROCESS_PATCH_PATH,
@@ -631,12 +758,12 @@ function verifySubprocessPatch({
   )
   record(
     issues,
-    patchDocumentation.includes(`\`${patchKey}\``)
-      && patchDocumentation.includes('https://github.com/cecil-su/dsh-workbench/issues/11')
-      && patchDocumentation.includes('Owner:')
-      && patchDocumentation.includes('Introduced: 2026-08-23')
-      && patchDocumentation.includes('Removal condition:')
-      && patchDocumentation.includes('scripts/subprocess-windows-hide-patch.test.mjs'),
+    patchSection.includes(`\`${patchKey}\``)
+      && patchSection.includes('https://github.com/cecil-su/dsh-workbench/issues/11')
+      && patchSection.includes('Owner:')
+      && patchSection.includes('Introduced: 2026-08-23')
+      && patchSection.includes('Removal condition:')
+      && patchSection.includes('scripts/subprocess-windows-hide-patch.test.mjs'),
     'subprocess patch documentation must record issue, owner, introduction, protection, and removal condition',
   )
   record(
@@ -667,11 +794,94 @@ function verifySubprocessPatch({
     ).test(packageVerifierSource),
     'package verifier must require packaged subprocess-local',
   )
+
+  const sandboxPatchKey = `${SANDBOX_WINDOWS_ACL_PATCH_PACKAGE}@${dshVersion}`
+  const sandboxPatchSection = patchDocumentationSection(patchDocumentation, sandboxPatchKey)
+  record(
+    issues,
+    workspace.patchedDependencies?.[sandboxPatchKey] === SANDBOX_WINDOWS_ACL_PATCH_PATH,
+    `pnpm workspace must patch ${sandboxPatchKey} from ${SANDBOX_WINDOWS_ACL_PATCH_PATH}`,
+  )
+
+  const sandboxPatchHash = lock.patchedDependencies?.[sandboxPatchKey]
+  record(
+    issues,
+    typeof sandboxPatchHash === 'string' && /^[a-f0-9]{64}$/u.test(sandboxPatchHash),
+    `pnpm lock must record a SHA-256 patch hash for ${sandboxPatchKey}`,
+  )
+  const sandboxSnapshotKeys = isObject(lock.snapshots)
+    ? Object.keys(lock.snapshots).filter((key) => key.startsWith(`${sandboxPatchKey}(`))
+    : []
+  record(
+    issues,
+    sandboxSnapshotKeys.length === 1,
+    `pnpm lock must contain exactly one patched ${sandboxPatchKey} snapshot`,
+  )
+  if (typeof sandboxPatchHash === 'string') {
+    for (const key of sandboxSnapshotKeys) {
+      record(
+        issues,
+        key.includes(`patch_hash=${sandboxPatchHash}`),
+        `pnpm lock ${sandboxPatchKey} snapshot must use its declared patch hash`,
+      )
+    }
+  }
+
+  record(
+    issues,
+    sandboxPatchSource.includes('diff --git a/lib/types-CNjZgO4h.js b/lib/types-CNjZgO4h.js')
+      && [...sandboxPatchSource.matchAll(/^\+\s*dwFlags: 257,$/gmu)].length === 2
+      && [...sandboxPatchSource.matchAll(/^\+\s*wShowWindow: 0,$/gmu)].length === 2,
+    'sandbox Windows ACL patch must hide both restricted-token child process paths',
+  )
+  record(
+    issues,
+    sandboxPatchSection.includes(`\`${sandboxPatchKey}\``)
+      && sandboxPatchSection.includes('https://github.com/cecil-su/dsh-workbench/issues/11')
+      && sandboxPatchSection.includes('Owner:')
+      && sandboxPatchSection.includes('Introduced: 2026-08-24')
+      && sandboxPatchSection.includes('Removal condition:')
+      && sandboxPatchSection.includes('scripts/subprocess-windows-hide-patch.test.mjs'),
+    'sandbox Windows ACL patch documentation must record issue, owner, introduction, protection, and removal condition',
+  )
+  record(
+    issues,
+    rootPackage.scripts?.['test:scripts']?.split('scripts/subprocess-windows-hide-patch.test.mjs').length === 2
+      && testSource.includes("@deepseek-ai/dsh-sandbox-windows-acl/package.json")
+      && testSource.includes('dwFlags: 257')
+      && testSource.includes("assert.equal(manifest.version, '0.1.1-rc.2')"),
+    'sandbox Windows ACL patch regression test must cover the exact package and hidden startup records',
+  )
+
+  const sandboxStageAssignment = packageVerifierSource.match(new RegExp(
+    `const\\s+(\\w+)\\s*=\\s*join\\(\\s*stageDir\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-sandbox-windows-acl')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('types-CNjZgO4h.js')}\\s*,?\\s*\\)`,
+    'u',
+  ))
+  record(
+    issues,
+    Boolean(sandboxStageAssignment),
+    'package verifier must resolve sandbox-windows-acl in the production stage',
+  )
+  if (sandboxStageAssignment) {
+    record(
+      issues,
+      new RegExp(`access\\(\\s*${escapeRegex(sandboxStageAssignment[1])}\\s*\\)`, 'u').test(packageVerifierSource),
+      'package verifier must require staged sandbox-windows-acl',
+    )
+  }
+  record(
+    issues,
+    new RegExp(
+      `access\\(\\s*join\\(\\s*packagedAppPath\\s*,\\s*${quoted('node_modules')}\\s*,\\s*${quoted('@deepseek-ai')}\\s*,\\s*${quoted('dsh-sandbox-windows-acl')}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted('types-CNjZgO4h.js')}\\s*,?\\s*\\)\\s*\\)`,
+      'u',
+    ).test(packageVerifierSource),
+    'package verifier must require packaged sandbox-windows-acl',
+  )
 }
 
 export async function verifyCompatibility(root = rootFromScript) {
   const issues = []
-  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource, patchDocumentation, directoryPickerPatchSource, directoryPickerTestSource, subprocessPatchSource, subprocessTestSource] = await Promise.all([
+  const [attributesSource, compatibility, upstreamVersion, workspaceSource, lockSource, rootPackage, desktopPackage, overlaySource, packageVerifierSource, diagnosticsTemplate, diagnosticsBuilderSource, patchDocumentation, codexCapabilitiesPatchSource, codexCapabilitiesTestSource, directoryPickerPatchSource, directoryPickerTestSource, subprocessPatchSource, sandboxPatchSource, subprocessTestSource] = await Promise.all([
     readFile(join(root, '.gitattributes'), 'utf8'),
     readCompatibility(root),
     readFile(join(root, 'upstream', 'version.json'), 'utf8').then(JSON.parse),
@@ -684,9 +894,12 @@ export async function verifyCompatibility(root = rootFromScript) {
     readFile(join(root, 'plugins', 'diagnostics-ui', 'src', 'client.js'), 'utf8'),
     readFile(join(root, 'plugins', 'diagnostics-ui', 'scripts', 'build-client.mjs'), 'utf8'),
     readFile(join(root, 'patches', 'README.md'), 'utf8'),
+    readFile(join(root, ...CODEX_CAPABILITIES_PATCH_PATH.split('/')), 'utf8'),
+    readFile(join(root, 'scripts', 'codex-capabilities-patch.test.mjs'), 'utf8'),
     readFile(join(root, ...DIRECTORY_PICKER_PATCH_PATH.split('/')), 'utf8'),
     readFile(join(root, 'scripts', 'directory-picker-patch.test.mjs'), 'utf8'),
     readFile(join(root, ...SUBPROCESS_PATCH_PATH.split('/')), 'utf8'),
+    readFile(join(root, ...SANDBOX_WINDOWS_ACL_PATCH_PATH.split('/')), 'utf8'),
     readFile(join(root, 'scripts', 'subprocess-windows-hide-patch.test.mjs'), 'utf8'),
   ])
   const workspace = parsePnpmYaml(workspaceSource)
@@ -842,11 +1055,25 @@ export async function verifyCompatibility(root = rootFromScript) {
   record(issues, diagnosticsBuilderSource.includes("readCompatibility(root)"), 'diagnostics build must read compatibility metadata')
   record(issues, diagnosticsBuilderSource.includes('compatibility?.dsh?.packageVersion'), 'diagnostics build must inject the compatibility DSH package version')
 
-  verifyOverlay(overlaySource, plugins, issues)
+  verifyOverlay(
+    overlaySource,
+    plugins.filter((plugin) => plugin.enabledByDefault !== false),
+    issues,
+  )
   for (const plugin of plugins) {
     record(issues, desktopPackage.dependencies?.[plugin.packageName] === 'workspace:*', `desktop dependencies must include ${plugin.packageName} as workspace:*`)
   }
   verifyPackageVerifier(packageVerifierSource, plugins, issues)
+  verifyCodexCapabilitiesPatch({
+    dshVersion,
+    lock,
+    packageVerifierSource,
+    patchDocumentation,
+    patchSource: codexCapabilitiesPatchSource,
+    rootPackage,
+    testSource: codexCapabilitiesTestSource,
+    workspace,
+  }, issues)
   verifyDirectoryPickerPatch({
     dshVersion,
     lock,
@@ -863,6 +1090,7 @@ export async function verifyCompatibility(root = rootFromScript) {
     packageVerifierSource,
     patchDocumentation,
     patchSource: subprocessPatchSource,
+    sandboxPatchSource,
     rootPackage,
     testSource: subprocessTestSource,
     workspace,

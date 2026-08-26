@@ -23,6 +23,7 @@ import {
   assertPackagingModeProvenance,
   collectPackageProvenance,
 } from './package-provenance.mjs'
+import { verifyPatchedRuntimeFiles } from './patched-runtime-verification.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const distRoot = join(root, 'dist')
@@ -268,6 +269,22 @@ async function validateStage() {
     'lib',
     'index.js',
   )
+  const sandboxWindowsAcl = join(
+    stageDir,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-sandbox-windows-acl',
+    'lib',
+    'types-CNjZgO4h.js',
+  )
+  const piAiCodexCapabilities = join(
+    stageDir,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-llm-pi-ai',
+    'lib',
+    'index.js',
+  )
   const desktopCore = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   const gptTools = join(stageDir, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')
@@ -283,6 +300,8 @@ async function validateStage() {
     access(directoryPickerWorker),
     access(directoryPickerWorkerIpc),
     access(subprocessLocal),
+    access(sandboxWindowsAcl),
+    access(piAiCodexCapabilities),
     access(desktopCore),
     access(desktopCoreClient),
     access(gptTools),
@@ -292,6 +311,7 @@ async function validateStage() {
     access(diagnosticsUi),
     access(diagnosticsUiClient),
   ])
+  await verifyPatchedRuntimeFiles(stageDir)
   await validateSymlinks(stageDir, stageDir)
   return readJson(join(dirname(dirname(dshBin)), 'package.json'))
 }
@@ -511,10 +531,27 @@ await Promise.all([
     'lib',
     'index.js',
   )),
+  access(join(
+    packagedAppPath,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-sandbox-windows-acl',
+    'lib',
+    'types-CNjZgO4h.js',
+  )),
+  access(join(
+    packagedAppPath,
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-llm-pi-ai',
+    'lib',
+    'index.js',
+  )),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'client.js')),
 ])
+await verifyPatchedRuntimeFiles(packagedAppPath)
 await validateSymlinks(join(packagedAppPath, 'node_modules'), join(packagedAppPath, 'node_modules'))
 await validateProductionManifests(packagedAppPath)
 await validateNoSourceCheckoutReferences(packagedAppPath)

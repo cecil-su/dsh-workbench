@@ -7,7 +7,6 @@ import {
   DESKTOP_CORE_SPECIFIER,
   DIAGNOSTICS_UI_SPECIFIER,
   DSH_AUTHORIZATION_SPECIFIER,
-  GPT_TOOLS_SPECIFIER,
   OAUTH_UI_SPECIFIER,
   prepareDesktopCoreContribution,
   renderDesktopCorePatch,
@@ -27,7 +26,6 @@ describe('desktop DSH contribution', () => {
       '/app/desktop-core.js',
       '/app/oauth-ui.js',
       '/app/diagnostics-ui.js',
-      '/app/gpt-tools.js',
     ))).toEqual([
       {
         insert: [
@@ -38,10 +36,6 @@ describe('desktop DSH contribution', () => {
           {
             id: 'dsh-workbench-desktop-core',
             name: '/app/desktop-core.js',
-          },
-          {
-            id: 'dsh-workbench-gpt-tools',
-            name: '/app/gpt-tools.js',
           },
           {
             id: 'dsh-workbench-oauth-ui',
@@ -64,7 +58,6 @@ describe('desktop DSH contribution', () => {
     const patch = JSON.parse(await readFile(contribution.patch, 'utf8')) as unknown
 
     expect(contribution.entry).toContain(join('plugins', 'desktop-core', 'lib', 'index.js'))
-    expect(contribution.gptToolsEntry).toContain(join('plugins', 'gpt-tools', 'lib', 'index.js'))
     expect(contribution.oauthEntry).toContain(join('plugins', 'oauth-ui', 'lib', 'index.js'))
     expect(contribution.diagnosticsEntry).toContain(join('plugins', 'diagnostics-ui', 'lib', 'index.js'))
     expect(contribution.patch).toBe(
@@ -80,10 +73,6 @@ describe('desktop DSH contribution', () => {
           {
             id: 'dsh-workbench-desktop-core',
             name: DESKTOP_CORE_SPECIFIER,
-          },
-          {
-            id: 'dsh-workbench-gpt-tools',
-            name: GPT_TOOLS_SPECIFIER,
           },
           {
             id: 'dsh-workbench-oauth-ui',

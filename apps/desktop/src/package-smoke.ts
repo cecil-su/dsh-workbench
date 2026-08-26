@@ -688,7 +688,6 @@ async function verifyDiagnosticsUi(
     const expected = [
       "dsh-workbench-authorization",
       "dsh-workbench-desktop-core",
-      "dsh-workbench-gpt-tools",
       "dsh-workbench-oauth-ui",
       "dsh-workbench-diagnostics-ui",
     ]
@@ -1448,6 +1447,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     assertSmoke(
       html.includes('@dsh-workbench/diagnostics-ui'),
       'Packaged DSH boot payload is missing the Diagnostics UI client bundle',
+    )
+    assertSmoke(
+      !html.includes('@dsh-workbench/gpt-tools'),
+      'Packaged DSH boot payload unexpectedly includes the optional GPT tools plugin',
     )
     report.runtime.httpBootPayload = true
     report.profiles.clientBundleInBootPayload = true

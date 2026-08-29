@@ -150,6 +150,11 @@ interface PackageSmokeReport {
     exitCode?: number | null
     expectedExit?: boolean
     httpBootPayload?: boolean
+    platformDatabase?: string
+    platformPersistenceVerified?: boolean
+    platformSchemaVersion?: number
+    taskPlatformEntry?: string
+    taskPlatformUiMounted?: boolean
     oauthUiEntry?: string
     pid?: number
     pidAliveAfterStop?: boolean
@@ -164,6 +169,15 @@ interface PackageSmokeReport {
   phase: 'setup' | 'verify'
   schemaVersion: 1
   status: 'failed' | 'passed'
+}
+
+interface PackageSmokeTaskPlatformModule {
+  PLATFORM_SCHEMA_VERSION?: number
+  runTaskPlatformPackageProbe?: (dataRoot: string, phase: 'setup' | 'verify') => {
+    databasePath: string
+    projectPersisted: boolean
+    schemaVersion: number
+  }
 }
 
 interface PackageSmokeDiagnosticProbe {
@@ -452,6 +466,29 @@ async function openProfilesUi(
   })()`, 'the populated Profiles section')
 }
 
+async function verifyTaskPlatformUi(window: BrowserWindow): Promise<void> {
+  try {
+    await waitForRendererCondition(window, `(() => {
+      const button = document.querySelector("[data-task-platform-launcher]") || [...document.querySelectorAll("button")]
+        .find((candidate) => {
+          const label = candidate.innerText.trim().toLowerCase()
+          return label.includes("task platform") || label.includes("任务平台")
+        })
+      if (!button) return false
+      button.click()
+      return true
+    })()`, 'the task platform navigation item')
+  } catch (error) {
+    const labels = await window.webContents.executeJavaScript(`([...document.querySelectorAll("button")].map((item) => item.innerText.trim()).filter(Boolean))`, true) as unknown
+    throw new Error(`Task platform navigation is missing; rendered buttons: ${JSON.stringify(labels)}`, { cause: error })
+  }
+
+  await waitForRendererCondition(window, `(() => {
+    const root = document.querySelector("[data-task-platform]")
+    return Boolean(root?.querySelector('[data-task-platform-action="refresh"]'))
+  })()`, 'the task platform section')
+}
+
 async function verifyAuthorizationUi(window: BrowserWindow): Promise<void> {
   await waitForRendererCondition(window, `(() => {
     const labels = new Set(["Sign-in & authorization", "登录与授权"])
@@ -689,6 +726,7 @@ async function verifyDiagnosticsUi(
       "dsh-workbench-authorization",
       "dsh-workbench-desktop-core",
       "dsh-workbench-oauth-ui",
+      "dsh-workbench-task-platform",
       "dsh-workbench-diagnostics-ui",
     ]
     const rows = [...root.querySelectorAll("[data-diagnostics-entry]")]
@@ -1217,6 +1255,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     )
     const desktopCoreEntry = await realpath(desktopCore.entry)
     const diagnosticsUiEntry = await realpath(desktopCore.diagnosticsEntry)
+    const taskPlatformEntry = await realpath(desktopCore.taskPlatformEntry)
     const oauthUiEntry = await realpath(desktopCore.oauthEntry)
     assertSmoke(isPathInside(packagedAppRoot, dshBin), 'DSH executable escaped the packaged application')
     assertSmoke(
@@ -1231,6 +1270,10 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       isPathInside(packagedAppRoot, oauthUiEntry),
       'OAuth UI entry escaped the packaged application',
     )
+    assertSmoke(
+      isPathInside(packagedAppRoot, taskPlatformEntry),
+      'Task platform entry escaped the packaged application',
+    )
 
     const dshPackage = JSON.parse(await readFile(join(dirname(dirname(dshBin)), 'package.json'), 'utf8')) as {
       version?: unknown
@@ -1240,7 +1283,19 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     report.runtime.dshVersion = dshPackage.version
     report.runtime.desktopCoreEntry = desktopCoreEntry
     report.runtime.diagnosticsUiEntry = diagnosticsUiEntry
+    report.runtime.taskPlatformEntry = taskPlatformEntry
     report.runtime.oauthUiEntry = oauthUiEntry
+
+    const platformModule = await import(pathToFileURL(taskPlatformEntry).href) as PackageSmokeTaskPlatformModule
+    assertSmoke(typeof platformModule.PLATFORM_SCHEMA_VERSION === 'number', 'Packaged task platform schema is unavailable')
+    assertSmoke(typeof platformModule.runTaskPlatformPackageProbe === 'function', 'Packaged task platform probe is unavailable')
+    const platformDataRoot = join(options.userDataPath, 'task-platform')
+    const platformProbe = platformModule.runTaskPlatformPackageProbe(platformDataRoot, options.phase)
+    assertSmoke(platformProbe.projectPersisted, 'Packaged task platform did not persist its project record')
+    assertSmoke(platformProbe.schemaVersion === platformModule.PLATFORM_SCHEMA_VERSION, 'Packaged task platform schema version does not match')
+    report.runtime.platformDatabase = platformProbe.databasePath
+    report.runtime.platformPersistenceVerified = true
+    report.runtime.platformSchemaVersion = platformProbe.schemaVersion
 
     const allocatedProfileIds = ['package-smoke-second', 'package-smoke-ui']
     const profiles = new ProfileStore(options.userDataPath, {
@@ -1269,6 +1324,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
     }
     const first = await profiles.getProfile(DEFAULT_PROFILE_ID)
     const second = await profiles.getProfile(secondProfile.id)
+
     const initialProfile = options.phase === 'setup' ? first : second
     const middleProfile = options.phase === 'setup' ? second : first
     const finalProfile = options.phase === 'setup' ? first : second
@@ -1357,7 +1413,7 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
         })
         const runtime = new DshRuntime({
           cwd: active.paths.workspace,
-          env: buildProfileEnvironment(process.env, active.paths.dshHome),
+          env: buildProfileEnvironment(process.env, active.paths.dshHome, join(options.userDataPath, 'task-platform')),
           onExit: (event) => {
             runtimeExitEvents.push(event)
             onExit(event)
@@ -1488,6 +1544,8 @@ export async function runPackageSmoke(options: PackageSmokeOptions): Promise<num
       'Profile bridge did not return every expected profile',
     )
     await openProfilesUi(initialWindow.window, expectedProfiles())
+    await verifyTaskPlatformUi(initialWindow.window)
+    report.runtime.taskPlatformUiMounted = true
     await verifyAuthorizationUi(initialWindow.window)
     report.authorization.officialFlowRegistered = true
     report.authorization.uiMounted = true

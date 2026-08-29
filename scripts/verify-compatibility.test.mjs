@@ -38,6 +38,7 @@ const requiredFixturePaths = [
   'plugins/diagnostics-ui/scripts/build-client.mjs',
   'plugins/gpt-tools/package.json',
   'plugins/oauth-ui/package.json',
+  'plugins/task-platform/package.json',
   'scripts/package.mjs',
   'scripts/patched-runtime-verification.mjs',
   'scripts/patched-runtime-verification.test.mjs',
@@ -120,6 +121,7 @@ describe('compatibility verifier', () => {
       'plugins/diagnostics-ui',
       'plugins/gpt-tools',
       'plugins/oauth-ui',
+      'plugins/task-platform',
     ])
   })
 
@@ -452,6 +454,14 @@ describe('compatibility verifier', () => {
     const configRoot = await createFixture()
     await replaceExactlyOnce(configRoot, 'electron-builder.config.mjs', "electronVersion: '43.4.1'", "electronVersion: '43.4.0'")
     await expectFailure(configRoot, /electron-builder config must select Electron 43\.4\.1/u)
+
+    const ownershipRoot = await createFixture()
+    await replaceExactlyOnce(ownershipRoot, 'electron-builder.config.mjs', 'beforeBuild: async () => false', 'beforeBuild: async () => true')
+    await expectFailure(ownershipRoot, /beforeBuild must skip its dependency collector/u)
+
+    const filesRoot = await createFixture()
+    await replaceExactlyOnce(filesRoot, 'electron-builder.config.mjs', "    'lib/**/*',", "    'lib/**/*',\n    'node_modules/**/*',")
+    await expectFailure(filesRoot, /files must leave node_modules to the verified afterPack copy/u)
   })
 
   it('rejects Electron toolchain drift in any workspace package manifest', async () => {
@@ -469,7 +479,7 @@ describe('compatibility verifier', () => {
   it('rejects first-party plugin drift in metadata, overlay, desktop dependencies, and packaging checks', async () => {
     const metadataRoot = await createFixture()
     await editJson(metadataRoot, 'upstream/compatibility.json', (value) => { value.firstPartyPlugins.pop() })
-    await expectFailure(metadataRoot, /exactly four first-party plugins/u)
+    await expectFailure(metadataRoot, /exactly 5 first-party plugins/u)
 
     const activationRoot = await createFixture()
     await editJson(activationRoot, 'upstream/compatibility.json', (value) => {

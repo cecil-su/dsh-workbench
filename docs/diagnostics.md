@@ -11,7 +11,7 @@ combines two authoritative sources without creating a second plugin manager:
   in-memory runtime log.
 
 The compatibility projection is deliberately fixed to the pinned DSH release
-and Workbench's four required overlay entries. Other plugins remain visible in
+and Workbench's five required overlay entries. Other plugins remain visible in
 the official Plugin list, but Workbench neither judges nor mutates them. This
 milestone does not add install, enable, disable, remove, or arbitrary plugin
 configuration operations.
@@ -65,7 +65,7 @@ restart serialization. The real DSH integration verifies that the diagnostics
 client bundle reaches the Web boot payload.
 
 The packaged smoke test runs from a copied installation and verifies the real
-official inventory Remote and four required active entries. A temporary smoke
+official inventory Remote and five required active entries. A temporary smoke
 plugin loaded by the packaged DSH child writes a fresh random canary across
 separate stdout and stderr chunks. The benign markers must survive through the
 console, diagnostic ring, IPC bridge, DOM, application report, and harness

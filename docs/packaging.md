@@ -35,10 +35,10 @@ unset.
 ## Self-contained production deployment
 
 The package script uses `pnpm deploy` with injected workspace packages and a
-hoisted production dependency layout. The production `node_modules` tree is
-copied verbatim after Electron's dependency scan so transitive and
-platform-specific optional packages cannot be dropped by hoisted-tree
-deduplication. Build-only pnpm state is removed, first-party production
+hoisted production dependency layout. It declares dependency handling external
+to Electron Builder, then copies the validated production `node_modules` tree
+verbatim in `afterPack`, so transitive and platform-specific optional packages
+cannot be dropped by hoisted-tree deduplication. Build-only pnpm state is removed, first-party production
 manifests are pinned to their installed versions, and the package is scanned
 for source-checkout references. The script also rejects any deployment or
 packaged symlink whose resolved target escapes its own tree. This prevents a
@@ -62,8 +62,10 @@ so Apple Silicon can launch it; this is not a trusted developer signature.
 The packaged application has a private smoke mode used only when both absolute
 smoke arguments are present. A passing report proves that:
 
-- Electron reports `app.isPackaged` and resolves DSH plus `desktop-core` inside
-  the copied package resources;
+- Electron reports `app.isPackaged` and resolves DSH, `desktop-core`, and both
+  halves of the task-platform plugin inside the copied package resources;
+- the packaged task platform opens its application-level SQLite database, reports
+  the expected migration schema, and proves a project record survives restart;
 - the real DSH Web host sends its ready message and serves the expected boot
   payload from a loopback URL;
 - the packaged native PTY helper runs a real command, returns its output, and

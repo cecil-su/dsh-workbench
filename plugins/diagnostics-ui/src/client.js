@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
       Object.freeze({ entryId: "dsh-workbench-authorization", moduleName: "@deepseek-ai/dsh-authorization" }),
       Object.freeze({ entryId: "dsh-workbench-desktop-core", moduleName: "@dsh-workbench/desktop-core" }),
       Object.freeze({ entryId: "dsh-workbench-oauth-ui", moduleName: "@dsh-workbench/oauth-ui" }),
+      Object.freeze({ entryId: "dsh-workbench-task-platform", moduleName: "@dsh-workbench/task-platform" }),
       Object.freeze({ entryId: "dsh-workbench-diagnostics-ui", moduleName: "@dsh-workbench/diagnostics-ui" }),
     ]);
     const inject = ["slots", "locale", "remote", "remote.pluginInventory"];

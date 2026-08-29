@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url)
 const FIRST_PARTY_PROFILE_PACKAGES = [
   '@dsh-workbench/desktop-core',
   '@dsh-workbench/gpt-tools',
+  '@dsh-workbench/task-platform',
   '@dsh-workbench/oauth-ui',
   '@dsh-workbench/diagnostics-ui',
 ] as const

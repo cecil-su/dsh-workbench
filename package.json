@@ -10,14 +10,14 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm verify:compatibility && pnpm typecheck && pnpm test",
-    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/gpt-tools build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm --filter @dsh-workbench/desktop dev",
+    "dev": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/gpt-tools build && pnpm --filter @dsh-workbench/task-platform build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm --filter @dsh-workbench/desktop dev",
     "package:artifacts": "pnpm build && node scripts/package.mjs --artifacts",
     "package:dir": "pnpm build && node scripts/package.mjs --dir",
     "test": "pnpm test:scripts && pnpm -r --if-present test",
     "test:integration": "pnpm --filter @dsh-workbench/desktop test:integration",
     "test:package": "node scripts/package-smoke.mjs",
     "test:scripts": "node --test scripts/codex-capabilities-patch.test.mjs scripts/directory-picker-patch.test.mjs scripts/subprocess-windows-hide-patch.test.mjs scripts/patched-runtime-verification.test.mjs scripts/package-provenance.test.mjs scripts/package-smoke-evidence.test.mjs scripts/verify-compatibility.test.mjs scripts/verify-release-matrix.test.mjs",
-    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/gpt-tools build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm --filter @dsh-workbench/runtime build && pnpm --filter @dsh-workbench/desktop-core build && pnpm --filter @dsh-workbench/gpt-tools build && pnpm --filter @dsh-workbench/task-platform build && pnpm --filter @dsh-workbench/oauth-ui build && pnpm --filter @dsh-workbench/diagnostics-ui build && pnpm -r --if-present typecheck",
     "verify:compatibility": "node scripts/verify-compatibility.mjs",
     "verify:release-matrix": "node scripts/verify-release-matrix.mjs"
   },

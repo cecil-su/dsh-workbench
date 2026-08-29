@@ -2,122 +2,159 @@
 
 ## Purpose
 
-DSH Workbench is a general-purpose desktop companion for DeepSeek Harness. It
-turns the pinned DSH Web experience into a secure, observable, and distributable
-desktop application while keeping upstream Harness replaceable.
+DSH Workbench is an independent, local-first AI multi-agent task-management
+platform. It combines a secure desktop host with a durable control plane for
+projects, documents, task graphs, ownership, assignments, observable sessions,
+artifacts, context recovery, and audit.
 
-It provides a stable desktop foundation for DSH runtime operations, profiles,
-official authorization, and plugin extensions.
+The platform exists so work can continue safely across projects, branches,
+models, agents, context windows, compaction, crashes, and ownership transfers
+without treating one process or one model conversation as durable truth.
 
-## Who it serves
+## Users and runtimes
 
-DSH Workbench is intended for people who want to:
+The platform serves:
 
-- run DSH through a native desktop application instead of managing a terminal
-  process and browser tab;
-- keep local profiles, sessions, credentials, and extensions under explicit
-  desktop lifecycle controls;
-- use first-party and optional Cordis/DSH plugins without modifying DSH Core;
-- diagnose startup, compatibility, authorization, and plugin-loading failures
-  from one place.
+- people using the Web panel or Codex/Pi conversations;
+- Registry Manager and Task Intake agents that prepare confirmable task drafts;
+- one logical Task Owner AI for each active task;
+- bounded Stage Agents such as Scout, Writer, Reviewer, and Test Agent;
+- a separately authorized Git Integrator;
+- read-only Process Analysts;
+- Workflow Optimizers that produce proposals and evaluations, not production
+  mutations.
 
-## Long-term product pillars
+Web, Codex, Pi, and background runtimes call the same application service. They
+must not maintain independent task state or write the platform database
+ directly.
 
-### Reliable desktop host
+## Product pillars
 
-The application owns DSH process startup, readiness, restart, shutdown, port
-selection, logs, and failure recovery. It exposes actionable errors and ensures
-that supervised processes are cleaned up.
+### Durable platform authority
 
-### Distributable application
+Workbench owns one platform data domain, separate from DSH profiles and managed
+repositories. The platform database is authoritative for project records,
+platform documents and versions, tasks, ownership epochs, assignments,
+workflows, approvals, and audit. An append-only ledger is authoritative for the
+observable parts of AI sessions.
 
-macOS, Windows, and Linux packages include every runtime and first-party plugin
-asset needed after installation. Packaged behavior is verified on a clean
-machine as part of release acceptance.
+### Controlled multi-agent execution
 
-### Profiles and official authorization
+Every active task has one stable logical Owner key and monotonically increasing
+ownership epoch. An Owner persists an immutable stage assignment before a
+Dispatcher starts or associates a runtime. Stage Agents report events and
+artifacts; only the current Owner may request task transitions after verifying
+those reports and the live project state.
 
-Users should be able to create, select, inspect, and recover isolated DSH
-profiles. Authorization UI delegates OAuth flows and credential persistence to
-public services provided by the pinned DSH release.
+Session, pane, process, and model identifiers are volatile runtime facts. They
+never become long-lived Owner identity.
 
-### Plugin-first extension experience
+### Recoverable, sourced context
 
-Product behavior belongs in Cordis/DSH plugins whenever an extension point
-exists. The desktop host should eventually make compatible plugins discoverable,
-configurable, diagnosable, and reversible while preserving Electron security.
+A new or resumed runtime receives a bounded context package generated from
+current task state, versioned platform documents, decisions, checkpoints,
+relevant session evidence, and live repository observations. Every included
+item records its source and version. Historical messages, summaries, completion
+scores, and agent claims are evidence or derived views and cannot overwrite
+current task truth.
 
-### Native operations
+### Shared interfaces and complete audit
 
-Once the runtime and packaging foundation is dependable, the application may
-add single-instance handling, native menus, tray behavior, update delivery, and
-crash diagnostics. Native features remain host concerns, while DSH agent and
-provider logic stays within DSH.
+The Web UI, MCP server, Pi adapter, and background Agent Runtime use the same
+domain commands and queries. Authorization is evaluated by user, role, project,
+task, ownership epoch, and capability. Accepted and rejected mutations enter a
+common audit/event stream and can be synchronized to other clients.
 
-## Product and architecture principles
+### Observable and improvable workflows
 
-1. Keep the core general-purpose and add product capabilities through plugins
-   with explicit scope.
-2. Prefer public DSH/Cordis contracts over upstream source changes.
-3. Keep the pinned upstream release replaceable and upgrade it in isolated
-   compatibility changes.
-4. Preserve Electron's sandbox and least-privilege renderer boundary.
-5. Keep user data local and recoverable by default. Store Workbench-owned state
-   separately from existing DSH user profiles.
-6. Treat startup, shutdown, packaging, migration, and recovery behavior as
-   testable product functionality.
-7. Expose failures with useful logs and explicit recovery actions.
+Prompt, Workflow, model, capability, tool, and context versions accompany every
+assignment and session. The platform records queue, execution, external block,
+user wait, review, rework, and recovery time separately, together with test,
+review, reopen, intervention, token, and tool-call evidence. Quality is
+presented by acceptance dimension, never collapsed into one authoritative
+percentage.
 
-## Roadmap horizons
+Workflow optimizations require offline replay or evaluation, independent review,
+controlled rollout, and verifiable rollback.
 
-### Foundation — current
+### Secure, distributable desktop foundation
 
-- supervise the exact DSH executable;
-- wait for the loopback Web endpoint and load it in a sandboxed window;
-- activate first-party plugins through a Workbench-owned profile overlay;
-- shut down DSH with the desktop application.
+The Electron host continues to own DSH startup, readiness, restart, shutdown,
+logs, profile isolation, official authorization, and packaging. Product
+behavior uses Cordis/DSH plugins and public interfaces where possible. Renderer
+sandboxing, context isolation, Web security, least privilege, secret filtering,
+and fixed-scope tools remain mandatory.
 
-### Near term
+## Authority boundaries
 
-- make ports, startup state, retry, logs, crashes, and shutdown robust;
-- add real-process integration tests for the host and plugin overlay;
-- package the application and verify DSH/plugin loading outside development;
-- establish release artifacts and clean-install smoke checks.
+| Fact domain | Authority |
+| --- | --- |
+| Platform project records and platform-native documents | Platform database and document versions |
+| Tasks, owners, statuses, assignments, workflows, approvals, and audit | Platform database |
+| Observable AI conversations and runtime events | Append-only session event ledger |
+| Business source code and actual Git state | Managed project filesystem and Git |
+| Business runtime data | The managed project's own databases and services |
+| Project-native documents | Managed project; platform stores an explicit link, import snapshot, or export relationship |
+| Code graphs, summaries, boards, scores, and metrics | Rebuildable derived data |
+| Large tool output and binary artifacts | Platform-controlled object storage, identified and governed by database records |
 
-### Medium term
+No logical document may have two writable authoritative copies without an
+explicit relationship. Managed repositories, their Git histories, and business
+databases are not copied into the platform authority.
 
-- add isolated profile selection and recovery;
-- implement official DSH authorization controls in `oauth-ui`;
-- add plugin status, compatibility diagnostics, and safe configuration;
-- provide user-facing runtime logs and repair actions.
+## Core safety rules
 
-### Later
+1. Deny by default and grant the minimum capability.
+2. Make domain writes transactional, idempotent, audited, and concurrency-safe.
+3. Require human confirmation points for task creation, Owner assignment, and
+   critical acceptance by default.
+4. Never let events, agent self-reports, metrics, or optimizer output
+   automatically commit Git, close tasks, or elevate privileges.
+5. Give Git lifecycle operations only to the separately authorized Git
+   Integrator.
+6. Do not expose arbitrary SQL, shell, filesystem, or provider credentials to AI
+   interfaces.
+7. Filter sensitive values on ingestion, display, retrieval, export, and model
+   context paths.
+8. Keep the active platform database on one native filesystem boundary; do not
+   share it across unreliable Windows/WSL locking boundaries.
+9. Test schema migration, backup, restore, idempotency, concurrent claims,
+   retention, export, and deletion as product behavior.
+10. Treat hidden model reasoning as unavailable unless a provider explicitly
+    exposes a permitted observable representation.
 
-- ship verified packages across supported desktop platforms;
-- add signing, update delivery, single-instance behavior, menus, and tray support;
-- improve crash reporting and upstream compatibility automation;
-- expand optional plugins without moving their business logic into the host.
+## Product surfaces
 
-The roadmap is ordered by dependency and risk. Runtime reliability is the entry
-condition for packaging, authorization, and plugin-management work.
+The Web application must provide project overview, task board and dependency
+graph, Owner/stage/blocker/next-action views, platform documents and versions,
+session and subagent timelines, expected-versus-actual Git state, approvals and
+ownership transfer, Prompt/Workflow versions, quality/time/cost evidence, and
+optimization proposals.
+
+Codex should integrate primarily through a platform MCP server. Pi uses a
+separate package or extension over the same application API. Domain interfaces
+cover project, document, task, owner, assignment, session, event, context,
+workspace, artifact, approval, and audit operations.
+
+## Delivery sequence
+
+1. Establish platform storage, migrations, domain commands, audit, and backup.
+2. Add projects, versioned documents, task graphs, ownership epochs, and
+   confirmation flows.
+3. Add immutable assignments, runtime dispatch contracts, session ledger, and
+   context packages.
+4. Expose the shared Web and AI application interfaces with authorization and
+   real-time events.
+5. Add live workspace/Git observations and separately authorized integration.
+6. Add process analytics, offline evaluation, rollout, and rollback controls.
+7. Qualify Windows x64, Linux x64, and macOS arm64 packages and recovery paths.
 
 ## Success criteria
 
-The long-term direction is succeeding when:
-
-- a clean installation manages DSH startup, restart, and shutdown and cleans all
-  supervised processes;
-- first-party plugins load deterministically in development and packaged builds;
-- profiles and credentials remain isolated, recoverable, and handled by their
-  documented owners;
-- upstream upgrades use reviewable, isolated compatibility migrations;
-- security checks, integration tests, and package smoke tests catch regressions
-  before release;
-- new contributors can distinguish host responsibilities, DSH responsibilities,
-  and optional plugin responsibilities from repository documentation alone.
-
-## Maintaining this document
-
-Update this document when the product's audience, core scope, product pillars,
-or roadmap horizons change. Keep implementation details and individual task
-lists in architecture notes or issues.
+The direction succeeds when a clean installation can create and recover durable
+platform work; every active task has one enforceable logical Owner; new runtimes
+receive sourced context without changing task truth; all clients observe the
+same audited state; stage and Git capabilities remain bounded; session evidence
+is replayable and governed; workflows can be compared without self-modifying
+production; and packaged builds pass migration, backup, security, runtime, and
+shutdown acceptance tests.

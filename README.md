@@ -28,6 +28,7 @@ Electron desktop host
         `-- product plugins
                 +-- desktop-core
                 +-- oauth-ui
+                +-- task-platform
                 `-- diagnostics-ui
 ```
 
@@ -60,6 +61,14 @@ workspaces, and persistent browser partitions. See
 [Workbench profiles](docs/profiles.md) for migration, recovery, and credential
 ownership details.
 
+The task platform is an application-level control plane shared by Web, AI tools,
+and background agents. Its SQLite database owns projects, documents, task graphs,
+logical Owners and epochs, immutable assignments, observable session events, and
+a redacted audit trail. Managed repositories remain the authority for source and
+Git state. Open the full-frame control center directly from **Task platform** at
+the bottom of the Workbench sidebar; operational work is not hidden in Settings.
+See [AI task platform architecture](docs/task-platform.md).
+
 Settings > Sign-in & authorization delegates provider login and local sign-out
 to the official services in the pinned DSH release. Workbench never owns or
 returns credential values. See [Authorization](docs/authorization.md).
@@ -88,6 +97,7 @@ apps/desktop/          Electron main and preload processes
 packages/runtime/      DSH child-process lifecycle and readiness checks
 plugins/desktop-core/  First-party Cordis plugin entrypoint
 plugins/oauth-ui/      Official DSH authorization controls
+plugins/task-platform/ Independent task control plane, tools, and UI
 plugins/diagnostics-ui/ First-party compatibility and runtime diagnostics
 docs/                  Architecture and maintenance decisions
 patches/               Exceptional, temporary upstream patches only

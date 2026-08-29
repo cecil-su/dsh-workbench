@@ -28,6 +28,10 @@ const EXPECTED_FIRST_PARTY_PLUGINS = Object.freeze([
     packageName: '@dsh-workbench/oauth-ui',
   }),
   Object.freeze({
+    entryId: 'dsh-workbench-task-platform',
+    packageName: '@dsh-workbench/task-platform',
+  }),
+  Object.freeze({
     entryId: 'dsh-workbench-diagnostics-ui',
     packageName: '@dsh-workbench/diagnostics-ui',
   }),
@@ -305,13 +309,14 @@ function verifyCompatibilityMetadata(compatibility, issues) {
   const plugins = compatibility.firstPartyPlugins
   record(issues, Array.isArray(plugins), 'compatibility firstPartyPlugins must be an array')
   if (!Array.isArray(plugins)) return
-  record(issues, plugins.length === EXPECTED_FIRST_PARTY_PLUGINS.length, 'compatibility must declare exactly four first-party plugins')
+  record(issues, plugins.length === EXPECTED_FIRST_PARTY_PLUGINS.length, `compatibility must declare exactly ${EXPECTED_FIRST_PARTY_PLUGINS.length} first-party plugins`)
   const identities = new Set()
   for (const expected of EXPECTED_FIRST_PARTY_PLUGINS) {
     const matches = plugins.filter((plugin) => (
       plugin?.entryId === expected.entryId
       && plugin?.packageName === expected.packageName
       && plugin?.enabledByDefault === expected.enabledByDefault
+      && plugin?.hostOnly === expected.hostOnly
     ))
     record(issues, matches.length === 1, `compatibility must declare ${expected.entryId} as ${expected.packageName} with the expected default activation exactly once`)
   }
@@ -321,6 +326,7 @@ function verifyCompatibilityMetadata(compatibility, issues) {
     record(issues, typeof plugin.entryId === 'string' && plugin.entryId !== '', 'compatibility first-party plugin entryId must be a non-empty string')
     record(issues, typeof plugin.packageName === 'string' && plugin.packageName !== '', 'compatibility first-party plugin packageName must be a non-empty string')
     record(issues, plugin.enabledByDefault === undefined || typeof plugin.enabledByDefault === 'boolean', 'compatibility first-party plugin enabledByDefault must be a boolean when present')
+    record(issues, plugin.hostOnly === undefined || typeof plugin.hostOnly === 'boolean', 'compatibility first-party plugin hostOnly must be a boolean when present')
     const identity = `${plugin?.entryId}\0${plugin?.packageName}`
     record(issues, !identities.has(identity), `compatibility contains duplicate first-party plugin ${String(plugin?.entryId)}`)
     identities.add(identity)
@@ -461,8 +467,8 @@ function verifyLockToolchainResolutions(lock, versions, issues) {
 }
 
 function verifyOverlay(source, plugins, issues) {
-  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
-  const argumentNames = ['entry', 'oauthEntry', 'diagnosticsEntry']
+  const invocation = source.match(/renderDesktopCorePatch\(\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,\s*([A-Z_]+)\s*,?\s*\)/u)
+  const argumentNames = ['entry', 'oauthEntry', 'taskPlatformEntry', 'diagnosticsEntry']
   for (const [index, plugin] of plugins.entries()) {
     const match = source.match(new RegExp(
       `\\{\\s*id:\\s*${quoted(plugin.entryId)}\\s*,\\s*name:\\s*([^,}\\n]+)`,
@@ -485,7 +491,8 @@ function verifyOverlay(source, plugins, issues) {
 function verifyPackageVerifier(source, plugins, issues) {
   for (const plugin of plugins) {
     const segments = plugin.packageName.split('/').map(quoted).join('\\s*,\\s*')
-    for (const fileName of ['index.js', 'client.js']) {
+    const requiredFiles = plugin.hostOnly ? ['index.js'] : ['index.js', 'client.js']
+    for (const fileName of requiredFiles) {
       const assignment = source.match(new RegExp(
         `const\\s+(\\w+)\\s*=\\s*join\\(stageDir,\\s*${quoted('node_modules')}\\s*,\\s*${segments}\\s*,\\s*${quoted('lib')}\\s*,\\s*${quoted(fileName)}\\s*\\)`,
         'u',
@@ -1043,6 +1050,16 @@ export async function verifyCompatibility(root = rootFromScript) {
     const configUrl = `${pathToFileURL(join(root, 'electron-builder.config.mjs')).href}?compatibility=${compatibilitySha256(compatibility)}`
     const config = (await import(configUrl)).default
     record(issues, config?.electronVersion === electronVersion, `electron-builder config must select Electron ${electronVersion}`)
+    record(issues, typeof config?.beforeBuild === 'function', 'electron-builder config must declare external dependency handling')
+    if (typeof config?.beforeBuild === 'function') {
+      record(issues, await config.beforeBuild() === false, 'electron-builder beforeBuild must skip its dependency collector')
+    }
+    record(
+      issues,
+      Array.isArray(config?.files) && !config.files.some((pattern) => String(pattern).includes('node_modules')),
+      'electron-builder files must leave node_modules to the verified afterPack copy',
+    )
+    record(issues, config?.npmRebuild !== false, 'electron-builder npmRebuild=false bypasses beforeBuild external ownership')
   } catch (error) {
     issues.push(`electron-builder config could not be loaded: ${error instanceof Error ? error.message : String(error)}`)
   }

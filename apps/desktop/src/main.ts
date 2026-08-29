@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { app, BrowserWindow, clipboard, dialog } from 'electron'
 import {
   DshRuntime,
@@ -108,6 +110,7 @@ async function getProfileTransitions(): Promise<ProfileTransitionCoordinator> {
   const operation = (async () => {
     const userDataPath = app.getPath('userData')
     const profiles = new ProfileStore(userDataPath)
+    const platformDataRoot = join(userDataPath, 'task-platform')
     await profiles.initialize()
     const desktopCore = await prepareDesktopCoreContribution(userDataPath)
     const controller = new ProfileRuntimeController(
@@ -122,7 +125,7 @@ async function getProfileTransitions(): Promise<ProfileTransitionCoordinator> {
         })
         return new DshRuntime({
           cwd: active.paths.workspace,
-          env: buildProfileEnvironment(process.env, active.paths.dshHome),
+          env: buildProfileEnvironment(process.env, active.paths.dshHome, platformDataRoot),
           onExit: (event) => {
             runtimeDiagnostics.append(diagnosticContext, {
               code: event.expected ? 'RUNTIME_STOPPED' : 'RUNTIME_EXITED_UNEXPECTEDLY',

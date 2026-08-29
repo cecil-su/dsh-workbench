@@ -87,7 +87,9 @@ const REQUIRED_PROFILE_EVIDENCE = Object.freeze([
 const REQUIRED_RUNTIME_TRUE_EVIDENCE = Object.freeze([
   'expectedExit',
   'httpBootPayload',
+  'platformPersistenceVerified',
   'ptyOutputVerified',
+  'taskPlatformUiMounted',
   'windowLoaded',
   'windowSecurityVerified',
 ])
@@ -249,6 +251,8 @@ function validateManifestShape(manifest, label) {
   requireNonEmptyString(value.electronBuilderVersion, `${label}.electronBuilderVersion`)
   const versions = requireRecord(value.versions, `${label}.versions`)
   requireNonEmptyString(versions.desktop, `${label}.versions.desktop`)
+  requireNonEmptyString(versions.taskPlatform, `${label}.versions.taskPlatform`)
+  assert(Number.isSafeInteger(value.platformSchemaVersion) && value.platformSchemaVersion > 0, `${label}.platformSchemaVersion is invalid`)
   requireNonEmptyString(versions.dsh, `${label}.versions.dsh`)
   assert(Array.isArray(value.artifacts), `${label}.artifacts must be an array`)
   return value
@@ -346,6 +350,8 @@ function validateAppSmoke(report, definition, manifest, label) {
   }
   assert(runtime.exitCode === 0, `${label}.runtime.exitCode must be zero`)
   assert(runtime.ptyExitCode === 0, `${label}.runtime.ptyExitCode must be zero`)
+  assert(runtime.platformSchemaVersion === manifest.platformSchemaVersion, `${label}.runtime.platformSchemaVersion does not match the manifest`)
+  requireNonEmptyString(runtime.platformDatabase, `${label}.runtime.platformDatabase`)
   assert(runtime.dshVersion === manifest.versions.dsh, `${label}.runtime.dshVersion does not match the manifest`)
   return { marker, value }
 }
@@ -418,6 +424,8 @@ function identityFromManifest(manifest) {
     gitDirty: manifest.gitDirty,
     gitSha: manifest.gitSha,
     lockfileSha256: manifest.lockfileSha256,
+    platformSchemaVersion: manifest.platformSchemaVersion,
+    taskPlatformVersion: manifest.versions.taskPlatform,
     workbenchVersion: manifest.versions.desktop,
   }
 }

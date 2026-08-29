@@ -150,7 +150,7 @@ describe('ProfileStore', () => {
     await expect(createStore(root).initialize()).rejects.toMatchObject({ code: 'corrupt-registry' })
   })
 
-  it('fails closed when a registry file is replaced by a symbolic link', async () => {
+  it.skipIf(process.platform === 'win32')('fails closed when a registry file is replaced by a symbolic link', async () => {
     const root = await useTemporaryDirectory('dsh-workbench-profile-')
     const outside = await useTemporaryDirectory('dsh-workbench-profile-outside-')
     const store = createStore(root)
@@ -171,7 +171,7 @@ describe('ProfileStore', () => {
     await store.initialize()
 
     await rename(join(root, 'profiles'), join(root, 'profiles-real'))
-    await symlink(outside, join(root, 'profiles'), 'dir')
+    await symlink(outside, join(root, 'profiles'), process.platform === 'win32' ? 'junction' : 'dir')
 
     await expect(store.list()).rejects.toMatchObject({ code: 'unsafe-path' })
   })
@@ -185,7 +185,11 @@ describe('ProfileStore', () => {
     await store.archive(created.id)
 
     await rename(join(root, 'profile-archives'), join(outside, 'profile-archives'))
-    await symlink(join(outside, 'profile-archives'), join(root, 'profile-archives'), 'dir')
+    await symlink(
+      join(outside, 'profile-archives'),
+      join(root, 'profile-archives'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
 
     await expect(createStore(root).initialize()).rejects.toMatchObject({ code: 'unsafe-path' })
   })

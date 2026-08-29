@@ -50,6 +50,7 @@ const PROFILE_ENVIRONMENT_ALLOWLIST = new Set([
 export function buildProfileEnvironment(
   environment: NodeJS.ProcessEnv,
   dshHome: string,
+  platformDataRoot: string,
 ): NodeJS.ProcessEnv {
   const inherited = Object.entries(environment).filter(([key, value]) => (
     value !== undefined && (
@@ -61,5 +62,6 @@ export function buildProfileEnvironment(
   return {
     ...Object.fromEntries(inherited),
     DSH_HOME: dshHome,
+    DSH_WORKBENCH_PLATFORM_DATA_DIR: platformDataRoot,
   }
 }

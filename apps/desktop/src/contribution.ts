@@ -7,11 +7,13 @@ const require = createRequire(import.meta.url)
 export const DESKTOP_CORE_SPECIFIER = '@dsh-workbench/desktop-core'
 export const OAUTH_UI_SPECIFIER = '@dsh-workbench/oauth-ui'
 export const DIAGNOSTICS_UI_SPECIFIER = '@dsh-workbench/diagnostics-ui'
+export const TASK_PLATFORM_SPECIFIER = '@dsh-workbench/task-platform'
 export const DSH_AUTHORIZATION_SPECIFIER = '@deepseek-ai/dsh-authorization'
 
 export interface DesktopCoreContribution {
   diagnosticsEntry: string
   entry: string
+  taskPlatformEntry: string
   oauthEntry: string
   patch: string
 }
@@ -19,6 +21,7 @@ export interface DesktopCoreContribution {
 export function renderDesktopCorePatch(
   entry: string,
   oauthEntry: string = OAUTH_UI_SPECIFIER,
+  taskPlatformEntry: string = TASK_PLATFORM_SPECIFIER,
   diagnosticsEntry: string = DIAGNOSTICS_UI_SPECIFIER,
 ): string {
   return `${JSON.stringify([
@@ -35,6 +38,10 @@ export function renderDesktopCorePatch(
         {
           id: 'dsh-workbench-oauth-ui',
           name: oauthEntry,
+        },
+        {
+          id: 'dsh-workbench-task-platform',
+          name: taskPlatformEntry,
         },
         {
           id: 'dsh-workbench-diagnostics-ui',
@@ -64,6 +71,7 @@ export async function prepareDesktopCoreContribution(
   const entry = require.resolve('@dsh-workbench/desktop-core')
   const oauthEntry = require.resolve('@dsh-workbench/oauth-ui')
   const diagnosticsEntry = require.resolve('@dsh-workbench/diagnostics-ui')
+  const taskPlatformEntry = require.resolve('@dsh-workbench/task-platform')
   const contributionPath = join(userDataPath, 'workbench')
   const patch = join(contributionPath, 'desktop-core.patch.json')
   const temporaryPatch = `${patch}.tmp-${process.pid}-${randomUUID()}`
@@ -73,6 +81,7 @@ export async function prepareDesktopCoreContribution(
     await writeFile(temporaryPatch, renderDesktopCorePatch(
       DESKTOP_CORE_SPECIFIER,
       OAUTH_UI_SPECIFIER,
+      TASK_PLATFORM_SPECIFIER,
       DIAGNOSTICS_UI_SPECIFIER,
     ), {
       encoding: 'utf8',
@@ -88,5 +97,5 @@ export async function prepareDesktopCoreContribution(
     await rm(temporaryPatch, { force: true }).catch(() => {})
   }
 
-  return { diagnosticsEntry, entry, oauthEntry, patch }
+  return { diagnosticsEntry, entry, taskPlatformEntry, oauthEntry, patch }
 }

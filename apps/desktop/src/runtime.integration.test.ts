@@ -61,7 +61,7 @@ describe('desktop DSH lifecycle', () => {
     const onExit = vi.fn()
     const runtime = new DshRuntime({
       cwd: userDataPath,
-      env: buildProfileEnvironment(process.env, dshHome),
+      env: buildProfileEnvironment(process.env, dshHome, join(userDataPath, 'task-platform')),
       onExit,
       patchFiles: [contribution.patch],
     })
@@ -82,6 +82,7 @@ describe('desktop DSH lifecycle', () => {
     expect(html).toContain('@dsh-workbench/desktop-core')
     expect(html).toContain('@dsh-workbench/oauth-ui')
     expect(html).toContain('@dsh-workbench/diagnostics-ui')
+    expect(html).toContain('@dsh-workbench/task-platform')
     expect(html).not.toContain('@dsh-workbench/gpt-tools')
 
     const authorizationResponse = await fetch(
@@ -146,7 +147,7 @@ describe('desktop DSH lifecycle', () => {
         prepareProfileModuleFallback(active.paths.dshHome)
         const instance = new DshRuntime({
           cwd: active.paths.workspace,
-          env: buildProfileEnvironment(process.env, active.paths.dshHome),
+          env: buildProfileEnvironment(process.env, active.paths.dshHome, join(userDataPath, 'task-platform')),
           onExit,
           patchFiles: [contribution.patch],
         })

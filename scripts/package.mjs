@@ -289,6 +289,8 @@ async function validateStage() {
   const desktopCoreClient = join(stageDir, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'client.js')
   const gptTools = join(stageDir, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')
   const gptToolsClient = join(stageDir, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'client.js')
+  const taskPlatform = join(stageDir, 'node_modules', '@dsh-workbench', 'task-platform', 'lib', 'index.js')
+  const taskPlatformClient = join(stageDir, 'node_modules', '@dsh-workbench', 'task-platform', 'lib', 'client.js')
   const oauthUi = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'index.js')
   const oauthUiClient = join(stageDir, 'node_modules', '@dsh-workbench', 'oauth-ui', 'lib', 'client.js')
   const diagnosticsUi = join(stageDir, 'node_modules', '@dsh-workbench', 'diagnostics-ui', 'lib', 'index.js')
@@ -306,6 +308,8 @@ async function validateStage() {
     access(desktopCoreClient),
     access(gptTools),
     access(gptToolsClient),
+    access(taskPlatform),
+    access(taskPlatformClient),
     access(oauthUi),
     access(oauthUiClient),
     access(diagnosticsUi),
@@ -550,6 +554,8 @@ await Promise.all([
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'desktop-core', 'lib', 'index.js')),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'index.js')),
   access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'gpt-tools', 'lib', 'client.js')),
+  access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'task-platform', 'lib', 'index.js')),
+  access(join(packagedAppPath, 'node_modules', '@dsh-workbench', 'task-platform', 'lib', 'client.js')),
 ])
 await verifyPatchedRuntimeFiles(packagedAppPath)
 await validateSymlinks(join(packagedAppPath, 'node_modules'), join(packagedAppPath, 'node_modules'))
@@ -563,6 +569,11 @@ if (mode[0] === '--artifacts' && artifacts.length === 0) {
 if (mode[0] === '--artifacts') validateReleaseArtifactSet(artifacts)
 
 const builderPackage = await readJson(join(root, 'node_modules', 'electron-builder', 'package.json'))
+const taskPlatformPackage = await readJson(join(stageDir, 'node_modules', '@dsh-workbench', 'task-platform', 'package.json'))
+const taskPlatformModule = await import(pathToFileURL(join(stageDir, 'node_modules', '@dsh-workbench', 'task-platform', 'lib', 'index.js')).href)
+if (!Number.isSafeInteger(taskPlatformModule.PLATFORM_SCHEMA_VERSION) || taskPlatformModule.PLATFORM_SCHEMA_VERSION < 1) {
+  throw new Error('Packaged task platform schema version is invalid')
+}
 const manifest = {
   appPath: projectRelative(packagedAppPath),
   arch: process.arch,
@@ -576,11 +587,13 @@ const manifest = {
   lockfileSha256: provenance.lockfileSha256,
   mode: mode[0] === '--dir' ? 'directory' : 'artifacts',
   platform: process.platform,
+  platformSchemaVersion: taskPlatformModule.PLATFORM_SCHEMA_VERSION,
   resourcesPath: projectRelative(resourcesPath),
   schemaVersion: 2,
   versions: {
     desktop: (await readJson(join(stageDir, 'package.json'))).version,
     dsh: dshPackage.version,
+    taskPlatform: taskPlatformPackage.version,
   },
 }
 const packageManifestPath = join(outputDir, 'package-manifest.json')

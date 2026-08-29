@@ -25,6 +25,7 @@ Electron 桌面宿主
         `-- 产品插件
                 +-- desktop-core
                 +-- oauth-ui
+                +-- task-platform
                 `-- diagnostics-ui
 ```
 
@@ -53,6 +54,11 @@ Electron 应用的 `userData` 目录中。桌面宿主还会加载 Workbench 自
 Settings > Profiles 页面可以创建和切换彼此隔离的 DSH Home、工作目录与持久化浏览器
 分区。迁移、恢复以及凭据归属边界见 [Workbench Profiles](docs/profiles.md)。
 
+任务平台是 Web、AI 工具与后台 Agent 共用的应用级控制面。它的 SQLite 数据库负责项目、
+文档、任务图、逻辑 Owner 与 epoch、不可变 Assignment、可观测 Session 事件和脱敏审计；
+受管仓库继续负责源码与实际 Git 状态。运行 Workbench 后，可从左侧栏底部的 **任务平台**
+直接进入全屏控制中心，无需进入 Settings。详见 [AI 任务平台架构](docs/task-platform.md)。
+
 Settings > Sign-in & authorization 会把服务商登录及本地退出登录交给锁定版 DSH
 的官方服务处理；Workbench 不持有也不返回凭据值。详见
 [授权边界](docs/authorization.md)。
@@ -77,6 +83,7 @@ apps/desktop/          Electron 主进程与 preload
 packages/runtime/      DSH 子进程生命周期与就绪检测
 plugins/desktop-core/  第一方 Cordis 插件入口
 plugins/oauth-ui/      DSH 官方授权控制界面
+plugins/task-platform/ 独立任务控制面、工具与管理界面
 plugins/diagnostics-ui/ 第一方兼容性与运行诊断界面
 docs/                  架构和维护决策
 patches/               仅允许临时的上游兼容补丁

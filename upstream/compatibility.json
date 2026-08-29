@@ -18,6 +18,10 @@
       "packageName": "@dsh-workbench/oauth-ui"
     },
     {
+      "entryId": "dsh-workbench-task-platform",
+      "packageName": "@dsh-workbench/task-platform"
+    },
+    {
       "entryId": "dsh-workbench-diagnostics-ui",
       "packageName": "@dsh-workbench/diagnostics-ui"
     },

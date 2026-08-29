@@ -4,7 +4,8 @@ Workbench profiles are the desktop ownership boundary around one DSH runtime.
 Each active profile supplies three independent resources:
 
 - a private `DSH_HOME` for DSH settings, credential documents, and extensions;
-- a profile workspace used as the DSH process working directory;
+- a profile workspace used as the DSH process working directory and capable of
+  containing multiple Projects;
 - a persistent Electron session partition for cookies and browser storage.
 
 The profile registry is stored under Electron `userData` rather than inside an
@@ -53,9 +54,12 @@ so browser state survives the upgrade.
 
 ## Credential boundary
 
-Workbench passes an allowlisted OS environment to each DSH process and sets the
-profile-owned `DSH_HOME`. Ambient API keys, provider tokens, Node injection
-flags, and unrelated application variables are not inherited. DSH's official
+Workbench passes an allowlisted OS environment to each DSH process, sets the
+profile-owned `DSH_HOME`, and points every profile runtime at the same
+application-level task platform under `userData/task-platform`. Platform records
+never live inside a Profile or a managed repository. Ambient API keys, provider
+tokens, Node injection flags, and unrelated application variables are not
+inherited. DSH's official
 credential provider continues to own `.credentials.yaml`, `.env`, and future
 authorization records inside that home.
 
@@ -68,7 +72,8 @@ reports.
 
 The packaged smoke test runs from a copied installation and verifies:
 
-- legacy `userData/dsh` and `userData/workspace` content migrates into Default;
+- legacy `userData/dsh` and `userData/workspace` content migrates into Default
+  without moving Project files;
 - the historical `persist:dsh-workbench` partition remains assigned to Default;
 - the real Profiles settings component creates, renames, archives, restores,
   lists, and selects test profiles through the preload and main-process IPC;

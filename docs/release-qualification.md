@@ -27,8 +27,8 @@ and complete artifact list. Every listed distribution file is covered by
 attributes require an LF checkout on every supported platform.
 
 The copied-package smoke produces two reports: the application report proves
-the packaged DSH, first-party plugins, profiles, authorization, diagnostics,
-repair, renderer security, and shutdown behavior; the harness report proves the
+the packaged DSH, task-platform schema and restart persistence, first-party
+plugins, profiles, authorization, diagnostics, repair, renderer security, and shutdown behavior; the harness report proves the
 outer process completed without a timeout or credential-canary disclosure and
 binds that smoke run to the exact package manifest SHA-256.
 
@@ -43,6 +43,6 @@ targets:
 - `windows-x64`: NSIS executable and ZIP.
 
 The verifier checks every file hash and requires all three targets to report the
-same Git revision, Workbench version, DSH version, Electron version,
-electron-builder version, lockfile identity, and compatibility identity. It
+same Git revision, Workbench version, DSH version, task-platform version and
+schema, Electron version, electron-builder version, lockfile identity, and compatibility identity. It
 writes one deterministic `release-qualification.json` report for the candidate.

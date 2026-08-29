@@ -103,6 +103,10 @@ function createAppSmoke(definition, marker) {
     phase: 'verify',
     profiles: trueFields(TRUE_PROFILE_FIELDS),
     runtime: {
+      platformDatabase: '/user-data/task-platform/platform.sqlite',
+      platformPersistenceVerified: true,
+      platformSchemaVersion: 1,
+      taskPlatformUiMounted: true,
       dshVersion: '0.1.1-rc.2',
       exitCode: 0,
       expectedExit: true,
@@ -182,10 +186,12 @@ async function createFixture() {
       lockfileSha256: 'b'.repeat(64),
       mode: 'artifacts',
       platform: definition.platform,
+      platformSchemaVersion: 1,
       schemaVersion: 2,
       versions: {
         desktop: '0.1.0',
         dsh: '0.1.1-rc.2',
+        taskPlatform: '0.1.0',
       },
     })
 
@@ -393,6 +399,8 @@ test('rejects unsafe paths and incomplete or corrupt artifact evidence', async (
 
 test('rejects every cross-platform release identity mismatch', async (context) => {
   const mutations = [
+    ['platformSchemaVersion', (manifest) => { manifest.platformSchemaVersion = 99 }],
+    ['taskPlatformVersion', (manifest) => { manifest.versions.taskPlatform = '9.9.9' }],
     ['gitSha', (manifest) => { manifest.gitSha = 'd'.repeat(40) }],
     ['lockfileSha256', (manifest) => { manifest.lockfileSha256 = 'd'.repeat(64) }],
     ['compatibilitySha256', (manifest) => { manifest.compatibilitySha256 = 'd'.repeat(64) }],
@@ -457,6 +465,15 @@ test('rejects failed and weak M6 smoke evidence', async (context) => {
       report.profiles.credentialIsolationVerified = false
       await writeJson(path, report)
     }, /credentialIsolationVerified must be true/u)
+  })
+
+  await context.test('missing task platform UI evidence', async () => {
+    await assertRejected(async ({ entries }) => {
+      const path = entries.get('windows-x64').appSmokePath
+      const report = await readJson(path)
+      report.runtime.taskPlatformUiMounted = false
+      await writeJson(path, report)
+    }, /taskPlatformUiMounted must be true/u)
   })
 
   await context.test('surviving runtime process', async () => {

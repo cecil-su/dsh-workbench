@@ -3,6 +3,7 @@ const config = {
   appId: 'com.dshworkbench.desktop',
   artifactName: 'dsh-workbench-${version}-${os}-${arch}-unsigned-ci.${ext}',
   asar: false,
+  beforeBuild: async () => false,
   electronFuses: {
     enableCookieEncryption: true,
     enableEmbeddedAsarIntegrityValidation: false,
@@ -19,7 +20,6 @@ const config = {
   files: [
     'build/icon.png',
     'lib/**/*',
-    'node_modules/**/*',
     'package.json',
   ],
   linux: {
@@ -34,7 +34,6 @@ const config = {
     identity: null,
     target: ['dmg', 'zip'],
   },
-  npmRebuild: false,
   nsis: {
     allowToChangeInstallationDirectory: true,
     oneClick: false,

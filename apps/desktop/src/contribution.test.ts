@@ -7,6 +7,7 @@ import {
   DESKTOP_CORE_SPECIFIER,
   DIAGNOSTICS_UI_SPECIFIER,
   DSH_AUTHORIZATION_SPECIFIER,
+  TASK_PLATFORM_SPECIFIER,
   OAUTH_UI_SPECIFIER,
   prepareDesktopCoreContribution,
   renderDesktopCorePatch,
@@ -25,6 +26,7 @@ describe('desktop DSH contribution', () => {
     expect(JSON.parse(renderDesktopCorePatch(
       '/app/desktop-core.js',
       '/app/oauth-ui.js',
+      '/app/task-platform.js',
       '/app/diagnostics-ui.js',
     ))).toEqual([
       {
@@ -40,6 +42,10 @@ describe('desktop DSH contribution', () => {
           {
             id: 'dsh-workbench-oauth-ui',
             name: '/app/oauth-ui.js',
+          },
+          {
+            id: 'dsh-workbench-task-platform',
+            name: '/app/task-platform.js',
           },
           {
             id: 'dsh-workbench-diagnostics-ui',
@@ -60,6 +66,7 @@ describe('desktop DSH contribution', () => {
     expect(contribution.entry).toContain(join('plugins', 'desktop-core', 'lib', 'index.js'))
     expect(contribution.oauthEntry).toContain(join('plugins', 'oauth-ui', 'lib', 'index.js'))
     expect(contribution.diagnosticsEntry).toContain(join('plugins', 'diagnostics-ui', 'lib', 'index.js'))
+    expect(contribution.taskPlatformEntry).toContain(join('plugins', 'task-platform', 'lib', 'index.js'))
     expect(contribution.patch).toBe(
       join(userDataPath, 'workbench', 'desktop-core.patch.json'),
     )
@@ -77,6 +84,10 @@ describe('desktop DSH contribution', () => {
           {
             id: 'dsh-workbench-oauth-ui',
             name: OAUTH_UI_SPECIFIER,
+          },
+          {
+            id: 'dsh-workbench-task-platform',
+            name: TASK_PLATFORM_SPECIFIER,
           },
           {
             id: 'dsh-workbench-diagnostics-ui',
